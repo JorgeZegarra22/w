@@ -105,6 +105,7 @@ class ResponsibleHttpClient:
                 continue
 
             if not self._is_retryable_status(response.status_code):
+                response.extensions["benter_attempt_count"] = attempt
                 return response
             if attempt == self.config.max_attempts:
                 raise RetryExhaustedError(

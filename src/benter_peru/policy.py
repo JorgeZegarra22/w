@@ -2,6 +2,7 @@
 
 import re
 from dataclasses import dataclass
+from hashlib import sha256
 from urllib.parse import urlsplit, urlunsplit
 
 from benter_peru.http.client import ResponsibleHttpClient, RetryExhaustedError
@@ -15,6 +16,7 @@ class PolicyDecision:
     crawl_delay_seconds: float | None
     reason_code: str
     robots_url: str
+    robots_sha256: str
 
 
 class PolicyUnavailableError(RuntimeError):
@@ -67,10 +69,11 @@ class PolicyGate:
         except RetryExhaustedError as exc:
             raise PolicyUnavailableError(f"robots policy unavailable for {robots_url}") from exc
 
+        robots_sha256 = sha256(response.content).hexdigest()
         if response.status_code == 404:
-            return PolicyDecision(True, None, "robots_not_found", robots_url)
+            return PolicyDecision(True, None, "robots_not_found", robots_url, robots_sha256)
         if response.status_code in {401, 403}:
-            return PolicyDecision(False, None, "robots_access_denied", robots_url)
+            return PolicyDecision(False, None, "robots_access_denied", robots_url, robots_sha256)
         if response.status_code != 200:
             raise PolicyUnavailableError(
                 f"unexpected robots response {response.status_code} for {robots_url}"
@@ -84,6 +87,7 @@ class PolicyGate:
             crawl_delay_seconds=float(crawl_delay) if crawl_delay is not None else None,
             reason_code="robots_allowed" if allowed else "robots_denied",
             robots_url=robots_url,
+            robots_sha256=robots_sha256,
         )
 
     @staticmethod

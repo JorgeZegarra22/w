@@ -1,3 +1,5 @@
+"""Shared test fixtures."""
+
 from collections.abc import Iterator
 
 import pytest

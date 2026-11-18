@@ -63,6 +63,7 @@ def test_retries_server_error_and_preserves_identifiable_user_agent() -> None:
 
     assert response.status_code == 200
     assert response.content == b"ok"
+    assert response.extensions["benter_attempt_count"] == 2
     assert attempts == [
         "BenterPeru/0.1 contacto@example.invalid",
         "BenterPeru/0.1 contacto@example.invalid",

@@ -33,6 +33,8 @@ def test_extracts_page_text_and_bounding_box_from_text_layer() -> None:
     assert bundle.requires_ocr is False
     assert bundle.method == "text"
     assert caballo.page_number == 1
+    assert caballo.confidence == 1.0
+    assert caballo.requires_review is False
     assert caballo.bbox.x0 >= 0
     assert caballo.bbox.top >= 0
     assert caballo.bbox.x1 > caballo.bbox.x0

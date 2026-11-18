@@ -1,3 +1,5 @@
+from hashlib import sha256
+
 import httpx
 
 from benter_peru.http.client import HttpClientConfig, ResponsibleHttpClient
@@ -39,6 +41,7 @@ def test_policy_gate_denies_disallowed_url_and_returns_crawl_delay() -> None:
     assert decision.crawl_delay_seconds == 7.0
     assert decision.reason_code == "robots_denied"
     assert decision.robots_url == "https://example.invalid/robots.txt"
+    assert decision.robots_sha256 == sha256(ROBOTS.encode()).hexdigest()
     assert requested_urls == ["https://example.invalid/robots.txt"]
 
 

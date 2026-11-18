@@ -18,6 +18,8 @@ class TextEvidence:
     text: str
     bbox: BoundingBox
     method: Literal["text"] = "text"
+    confidence: float = 1.0
+    requires_review: bool = False
 
 
 @dataclass(frozen=True, slots=True)
