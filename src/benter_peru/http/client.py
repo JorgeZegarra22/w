@@ -74,12 +74,30 @@ class ResponsibleHttpClient:
         jitter: Callable[[], float] = random.random,
     ) -> None:
         self.config = config
-        self._client = client or httpx.Client(timeout=config.timeout_seconds, trust_env=False)
+        self._client = client or httpx.Client(
+            timeout=config.timeout_seconds,
+            trust_env=False,
+            follow_redirects=True,
+        )
         self._sleep = sleep
         self._monotonic = monotonic
         self._jitter = jitter
         self._last_request_started_at: dict[str, float] = {}
+        self._host_min_intervals: dict[str, float] = {}
         self._pacing_lock = Lock()
+
+    def set_host_min_interval(self, url: str, seconds: float) -> None:
+        """Raise the pacing floor for a host, for example from robots crawl-delay."""
+        if seconds < 0:
+            raise ValueError("host interval must be nonnegative")
+        host = urlsplit(url).netloc.lower()
+        if not host:
+            raise ValueError("url must include a host")
+        with self._pacing_lock:
+            current = self._host_min_intervals.get(
+                host, self.config.min_request_interval_seconds
+            )
+            self._host_min_intervals[host] = max(current, seconds)
 
     def fetch(
         self, url: str, *, headers: Mapping[str, str] | None = None
@@ -144,7 +162,10 @@ class ResponsibleHttpClient:
             now = self._monotonic()
             previous = self._last_request_started_at.get(host)
             if previous is not None:
-                remaining = self.config.min_request_interval_seconds - (now - previous)
+                interval = self._host_min_intervals.get(
+                    host, self.config.min_request_interval_seconds
+                )
+                remaining = interval - (now - previous)
                 if remaining > 0:
                     self._sleep(remaining)
                     now = self._monotonic()

@@ -155,3 +155,19 @@ def test_spaces_requests_to_the_same_host() -> None:
 def test_requires_nonempty_user_agent() -> None:
     with pytest.raises(ValueError, match="user_agent"):
         HttpClientConfig(user_agent="  ")
+
+
+def test_dynamic_host_interval_never_reduces_configured_pacing() -> None:
+    clock = FakeClock()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, request=request)
+
+    client = build_client(handler, clock=clock)
+    url = "https://example.invalid/program"
+
+    client.fetch(url)
+    client.set_host_min_interval(url, 7.0)
+    client.fetch(url)
+
+    assert clock.sleeps == [7.0]

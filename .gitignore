@@ -6,9 +6,11 @@
 # Local data and protected documents
 .superpowers/
 var/
+blobs/
 *.db
 *.db-*
 *.sqlite
+*.sqlite*
 *.sqlite3
 *.pdf
 

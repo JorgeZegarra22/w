@@ -1,5 +1,6 @@
 """Atomic, auditable document collection and extraction orchestration."""
 
+import logging
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -33,13 +34,15 @@ from benter_peru.db.schema import (
     source_registry,
 )
 from benter_peru.db.uow import UnitOfWork
-from benter_peru.discovery import HtmlDocumentDiscoverer, SourceDefinition
+from benter_peru.discovery import DiscoveredDocument, HtmlDocumentDiscoverer, SourceDefinition
 from benter_peru.extraction.models import ExtractionBundle
 from benter_peru.http.client import ResponsibleHttpClient
 from benter_peru.ids import new_ulid
 from benter_peru.orchestrator.models import RunResult, RunStatus
 from benter_peru.policy import PolicyDecision, PolicyGate
 from benter_peru.storage.local import LocalBlobStore
+
+LOGGER = logging.getLogger(__name__)
 
 
 class ExtractionAdapter(Protocol):
@@ -121,6 +124,7 @@ class RunOrchestrator:
                     facts=0,
                     reviews=0,
                     failures=0,
+                    discovered_documents=(),
                 )
 
             index_response = self._fetch(connection, run_id, source.index_url)
@@ -138,15 +142,29 @@ class RunOrchestrator:
             deduplicated_count = 0
             fact_count = 0
             review_count = 0
+            failure_count = 0
 
             for item in discovered:
-                policy = self._evaluate_policy(connection, source_id, item.url)
+                fetch_url = item.download_url or item.url
+                policy = self._evaluate_policy(connection, source_id, fetch_url)
                 if not policy.allowed:
                     continue
-                response = self._fetch(connection, run_id, item.url)
+                response = self._fetch(connection, run_id, fetch_url)
                 response.raise_for_status()
                 downloaded_count += 1
                 content = response.content
+                if b"%PDF-" not in content[:1024]:
+                    failure_count += 1
+                    LOGGER.warning(
+                        "document response is not a PDF: %s",
+                        item.url,
+                        extra={
+                            "document_type": item.document_type,
+                            "fetch_url": fetch_url,
+                            "content_type": response.headers.get("Content-Type"),
+                        },
+                    )
+                    continue
                 digest = sha256(content).hexdigest()
                 stored = self._blob_store.put_if_absent(BytesIO(content), digest)
                 self._record_blob(connection, stored.storage_key, digest, stored.byte_size)
@@ -239,7 +257,13 @@ class RunOrchestrator:
                     .values(status="completed")
                 )
 
-            status: RunStatus = "completed_with_reviews" if review_count else "completed"
+            status: RunStatus
+            if failure_count:
+                status = "partial_failure"
+            elif review_count:
+                status = "completed_with_reviews"
+            else:
+                status = "completed"
             return self._finish(
                 connection,
                 run_id=run_id,
@@ -250,7 +274,8 @@ class RunOrchestrator:
                 deduplicated=deduplicated_count,
                 facts=fact_count,
                 reviews=review_count,
-                failures=0,
+                failures=failure_count,
+                discovered_documents=discovered,
             )
 
     def _get_or_create_source(
@@ -293,6 +318,7 @@ class RunOrchestrator:
             fact_count=row["fact_count"],
             review_count=row["review_count"],
             failure_count=row["failure_count"],
+            discovered_documents=(),
         )
 
     def _evaluate_policy(
@@ -555,6 +581,7 @@ class RunOrchestrator:
         facts: int,
         reviews: int,
         failures: int,
+        discovered_documents: tuple[DiscoveredDocument, ...],
     ) -> RunResult:
         finished_at = self._clock()
         connection.execute(
@@ -624,4 +651,5 @@ class RunOrchestrator:
             fact_count=facts,
             review_count=reviews,
             failure_count=failures,
+            discovered_documents=discovered_documents,
         )

@@ -1,5 +1,7 @@
 """Tests for explicit document discovery from publication HTML."""
 
+import logging
+
 from benter_peru.discovery import HtmlDocumentDiscoverer
 
 
@@ -24,3 +26,32 @@ def test_ignores_non_http_and_empty_document_links() -> None:
     """
 
     assert HtmlDocumentDiscoverer().discover(html, "https://example.test/") == ()
+
+
+def test_classifies_real_links_from_visible_text_and_accessible_context() -> None:
+    html = """
+    <a href="https://drive.google.com/file/d/program-id/view">PROG- MONTERRICO</a>
+    <a href="/edition" aria-label="Abrir Estudie su Polla"><img alt="Edición semanal"></a>
+    """
+
+    discovered = HtmlDocumentDiscoverer().discover(html, "https://example.test/")
+
+    assert [(item.document_type, item.link_context) for item in discovered] == [
+        ("programa_monterrico", "PROG- MONTERRICO"),
+        ("estudie_su_polla", "Abrir Estudie su Polla Edición semanal"),
+    ]
+    assert discovered[0].download_url == (
+        "https://drive.google.com/uc?export=download&id=program-id"
+    )
+
+
+def test_warns_cleanly_when_expected_estudie_link_is_absent(caplog) -> None:
+    html = '<a href="/program">PROG-MONTERRICO</a>'
+    discoverer = HtmlDocumentDiscoverer(expected_types=("estudie_su_polla",))
+
+    with caplog.at_level(logging.WARNING):
+        discovered = discoverer.discover(html, "https://example.test/")
+
+    assert len(discovered) == 1
+    assert "estudie_su_polla" in caplog.text
+    assert "not found" in caplog.text

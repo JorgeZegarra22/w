@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 from typing import Literal
 
+from benter_peru.discovery import DiscoveredDocument
+
 type RunStatus = Literal[
     "completed",
     "completed_with_reviews",
@@ -22,3 +24,4 @@ class RunResult:
     fact_count: int
     review_count: int
     failure_count: int
+    discovered_documents: tuple[DiscoveredDocument, ...] = ()

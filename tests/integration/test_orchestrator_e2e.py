@@ -99,7 +99,7 @@ def test_complete_pipeline_is_auditable_and_idempotent(
     pdf = _pdf_bytes()
     document_url = httpserver.url_for("/opaque-document")
     html = (
-        '<a data-document-type="estudie_su_polla" href="/opaque-document">'
+        '<a href="/opaque-document" aria-label="Programa Monterrico">'
         "Edicion semanal</a>"
     )
     httpserver.expect_request("/robots.txt").respond_with_data(
@@ -123,6 +123,8 @@ def test_complete_pipeline_is_auditable_and_idempotent(
     second_counts = _table_counts(migrated_engine)
 
     assert first.status == "completed_with_reviews"
+    assert first.discovered_documents[0].document_type == "programa_monterrico"
+    assert first.discovered_documents[0].url == document_url
     assert first.downloaded_count == 1
     assert first.fact_count >= 1
     assert first.review_count == first.fact_count
@@ -185,3 +187,33 @@ def test_pipeline_exception_rolls_back_all_database_records(
 
     assert all(count == 0 for count in _table_counts(migrated_engine).values())
     assert (blob_root / sha256(pdf).hexdigest()).is_file()
+
+
+def test_non_pdf_download_is_reported_without_aborting_the_run(
+    migrated_engine: Engine,
+    httpserver: HTTPServer,
+    tmp_path: Path,
+    caplog,
+) -> None:
+    httpserver.expect_request("/robots.txt").respond_with_data("User-agent: *\nAllow: /\n")
+    httpserver.expect_request("/index").respond_with_data(
+        '<a href="/viewer">PROG-MONTERRICO</a>'
+    )
+    httpserver.expect_request("/viewer").respond_with_data(
+        "<html>viewer, not a PDF</html>", content_type="text/html"
+    )
+    orchestrator = _build_orchestrator(
+        engine=migrated_engine,
+        httpserver=httpserver,
+        blob_root=tmp_path.parent / f"{tmp_path.name}-non-pdf-blobs",
+        router=LowConfidenceRouter(),
+    )
+
+    result = orchestrator.run(source_code="informativo", correlation_id="run-non-pdf")
+
+    assert result.status == "partial_failure"
+    assert result.discovered_count == 1
+    assert result.downloaded_count == 1
+    assert result.failure_count == 1
+    assert _table_counts(migrated_engine)["documents"] == 0
+    assert "response is not a PDF" in caplog.text

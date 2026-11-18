@@ -81,6 +81,8 @@ class PolicyGate:
 
         user_agent = self._client.config.user_agent
         allowed, crawl_delay = self._evaluate_rules(response.text, user_agent, url)
+        if crawl_delay is not None:
+            self._client.set_host_min_interval(url, crawl_delay)
 
         return PolicyDecision(
             allowed=allowed,

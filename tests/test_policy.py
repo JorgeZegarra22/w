@@ -72,3 +72,38 @@ def test_forbidden_robots_file_fails_closed() -> None:
 
     assert decision.allowed is False
     assert decision.reason_code == "robots_access_denied"
+
+
+def test_policy_gate_applies_crawl_delay_to_subsequent_host_requests() -> None:
+    requested_urls: list[str] = []
+    sleeps: list[float] = []
+    now = 0.0
+
+    def sleep(seconds: float) -> None:
+        nonlocal now
+        sleeps.append(seconds)
+        now += seconds
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested_urls.append(str(request.url))
+        return httpx.Response(200, request=request, text=ROBOTS)
+
+    raw_client = httpx.Client(transport=httpx.MockTransport(handler))
+    client = ResponsibleHttpClient(
+        HttpClientConfig(
+            user_agent="BenterPeru/0.1 contacto@example.invalid",
+            min_request_interval_seconds=1.0,
+        ),
+        client=raw_client,
+        sleep=sleep,
+        monotonic=lambda: now,
+    )
+
+    PolicyGate(client).evaluate("https://example.invalid/private/public/program")
+    client.fetch("https://example.invalid/private/public/program")
+
+    assert requested_urls == [
+        "https://example.invalid/robots.txt",
+        "https://example.invalid/private/public/program",
+    ]
+    assert sleeps == [7.0]
