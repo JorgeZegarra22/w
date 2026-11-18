@@ -1,5 +1,16 @@
 # Scaffolding and Database Implementation Plan
 
+## Estado del entregable
+
+- [x] **Entregable 1: Núcleo de Ingesta Documental — COMPLETADO Y APROBADO**
+- Aprobación final: 2026-11-18.
+- Integración: `codex/entregable-1-scaffold-db` fusionada localmente en `master`.
+- Verificación posterior al merge: `34 passed` con `pytest`.
+- Alcance completado: scaffolding, persistencia portable, adaptadores responsables,
+  extracción PDF con capa de texto, `UnitOfWork`, orquestación, idempotencia,
+  trazabilidad, revisión humana y pruebas end-to-end.
+- Entregable 2: **NO INICIADO**; requiere autorización explícita.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Create the Python project skeleton and a tested SQLite schema that implements the approved Entregable 1 ERD and remains portable to PostgreSQL.
