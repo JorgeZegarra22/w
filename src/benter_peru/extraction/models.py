@@ -23,7 +23,19 @@ class TextEvidence:
 
 
 @dataclass(frozen=True, slots=True)
+class StructuredFact:
+    fact_type: str
+    subject_key: str
+    normalized_value: str
+    raw_value: str
+    confidence: float
+    requires_review: bool
+    evidence: TextEvidence
+
+
+@dataclass(frozen=True, slots=True)
 class ExtractionBundle:
     method: Literal["text"]
     requires_ocr: bool
     evidence: tuple[TextEvidence, ...]
+    facts: tuple[StructuredFact, ...] = ()

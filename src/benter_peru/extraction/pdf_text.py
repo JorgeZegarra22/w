@@ -5,7 +5,13 @@ from typing import BinaryIO
 
 import pdfplumber
 
-from benter_peru.extraction.models import BoundingBox, ExtractionBundle, TextEvidence
+from benter_peru.extraction.hipico_table import HipicoTableExtractor
+from benter_peru.extraction.models import (
+    BoundingBox,
+    ExtractionBundle,
+    StructuredFact,
+    TextEvidence,
+)
 
 type PdfSource = str | Path | BinaryIO
 
@@ -13,8 +19,12 @@ type PdfSource = str | Path | BinaryIO
 class TextPdfExtractor:
     """Extract word evidence from machine-generated PDFs without OCR."""
 
+    def __init__(self, table_extractor: HipicoTableExtractor | None = None) -> None:
+        self._table_extractor = table_extractor or HipicoTableExtractor()
+
     def extract(self, source: PdfSource) -> ExtractionBundle:
         evidence: list[TextEvidence] = []
+        structured_facts: list[StructuredFact] = []
         # pdfplumber accepts seekable binary streams at runtime, while its public
         # type annotation enumerates only a subset of BinaryIO implementations.
         with pdfplumber.open(source) as document:  # type: ignore[arg-type]
@@ -23,7 +33,16 @@ class TextPdfExtractor:
                 return ExtractionBundle(method="text", requires_ocr=True, evidence=())
 
             for page in pages_with_text:
-                for word in page.extract_words():
+                words = page.extract_words()
+                if page.page_number == 1:
+                    structured_facts.extend(
+                        self._table_extractor.extract(
+                            words,
+                            page_number=page.page_number,
+                            page_width=float(page.width),
+                        )
+                    )
+                for word in words:
                     evidence.append(
                         TextEvidence(
                             page_number=page.page_number,
@@ -38,7 +57,10 @@ class TextPdfExtractor:
                     )
 
         return ExtractionBundle(
-            method="text", requires_ocr=False, evidence=tuple(evidence)
+            method="text",
+            requires_ocr=False,
+            evidence=tuple(evidence),
+            facts=tuple(structured_facts),
         )
 
     @staticmethod

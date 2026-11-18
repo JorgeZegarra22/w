@@ -4,6 +4,7 @@ import argparse
 import json
 import logging
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
@@ -34,6 +35,7 @@ def build_parser() -> argparse.ArgumentParser:
     subcommands = parser.add_subparsers(dest="command", required=True)
     run = subcommands.add_parser("run", help="run one configured source")
     run.add_argument("--source", required=True, choices=("elinformativohipico",))
+    run.add_argument("--local-file", type=Path)
     return parser
 
 
@@ -109,30 +111,43 @@ def _build_report(engine: Engine, result: RunResult) -> dict[str, Any]:
     }
 
 
-def _run(config: RuntimeConfig) -> dict[str, Any]:
+def _run(config: RuntimeConfig, *, local_file: Path | None = None) -> dict[str, Any]:
     config.database_path.parent.mkdir(parents=True, exist_ok=True)
     source = _source_definition(config)
     engine = create_database_engine(config.database_url)
     try:
         upgrade_database(engine)
-        client = ResponsibleHttpClient(
-            HttpClientConfig(
-                user_agent=config.user_agent,
-                max_attempts=config.http_max_attempts,
-                min_request_interval_seconds=config.min_request_interval_seconds,
+        client = None
+        policy_gate = None
+        discoverer = None
+        if local_file is None:
+            client = ResponsibleHttpClient(
+                HttpClientConfig(
+                    user_agent=config.user_agent,
+                    max_attempts=config.http_max_attempts,
+                    min_request_interval_seconds=config.min_request_interval_seconds,
+                )
             )
-        )
+            policy_gate = PolicyGate(client)
+            discoverer = HtmlDocumentDiscoverer(expected_types=("estudie_su_polla",))
         orchestrator = RunOrchestrator(
             engine=engine,
             sources={source.code: source},
-            policy_gate=PolicyGate(client),
+            policy_gate=policy_gate,
             http_client=client,
             blob_store=LocalBlobStore(config.blob_root),
             extraction_router=ExtractionRouter(),
-            discoverer=HtmlDocumentDiscoverer(expected_types=("estudie_su_polla",)),
+            discoverer=discoverer,
             review_threshold=config.review_confidence_threshold,
         )
-        result = orchestrator.run(source_code=source.code, correlation_id=new_ulid())
+        if local_file is None:
+            result = orchestrator.run(source_code=source.code, correlation_id=new_ulid())
+        else:
+            result = orchestrator.run_local(
+                source_code=source.code,
+                correlation_id=new_ulid(),
+                file_path=local_file,
+            )
         return _build_report(engine, result)
     finally:
         engine.dispose()
@@ -142,7 +157,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     arguments = build_parser().parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
     if arguments.command == "run":
-        report = _run(RuntimeConfig.from_env())
+        report = _run(RuntimeConfig.from_env(), local_file=arguments.local_file)
         print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
         return 0
     raise AssertionError("unreachable command")

@@ -5,7 +5,7 @@ from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from hashlib import sha256
 from io import BytesIO
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import Protocol, cast
 from urllib.parse import urlsplit
 
@@ -35,7 +35,7 @@ from benter_peru.db.schema import (
 )
 from benter_peru.db.uow import UnitOfWork
 from benter_peru.discovery import DiscoveredDocument, HtmlDocumentDiscoverer, SourceDefinition
-from benter_peru.extraction.models import ExtractionBundle
+from benter_peru.extraction.models import ExtractionBundle, TextEvidence
 from benter_peru.http.client import ResponsibleHttpClient
 from benter_peru.ids import new_ulid
 from benter_peru.orchestrator.models import RunResult, RunStatus
@@ -61,8 +61,8 @@ class RunOrchestrator:
         *,
         engine: Engine,
         sources: Mapping[str, SourceDefinition],
-        policy_gate: PolicyGate,
-        http_client: ResponsibleHttpClient,
+        policy_gate: PolicyGate | None,
+        http_client: ResponsibleHttpClient | None,
         blob_store: LocalBlobStore,
         extraction_router: ExtractionAdapter,
         discoverer: HtmlDocumentDiscoverer | None = None,
@@ -179,83 +179,16 @@ class RunOrchestrator:
                     blob_sha256=digest,
                 )
                 del document_id
-                input_fingerprint = sha256(
-                    f"{digest}:pdf-text:1".encode()
-                ).hexdigest()
-                existing_task = connection.execute(
-                    select(processing_tasks.c.status).where(
-                        processing_tasks.c.idempotency_key == input_fingerprint
-                    )
-                ).first()
-                if existing_task is not None and existing_task.status == "completed":
-                    deduplicated_count += 1
-                    continue
-
-                task_id = self._id()
-                connection.execute(
-                    insert(processing_tasks).values(
-                        id=task_id,
-                        crawl_run_id=run_id,
-                        document_version_id=version_id,
-                        idempotency_key=input_fingerprint,
-                        task_type="extract_pdf_text",
-                        status="running",
-                        attempt_count=1,
-                    )
+                deduplicated, created_facts, created_reviews = self._process_document_version(
+                    connection,
+                    run_id=run_id,
+                    version_id=version_id,
+                    content=content,
+                    blob_sha256=digest,
                 )
-                connection.execute(
-                    update(document_versions)
-                    .where(document_versions.c.id == version_id)
-                    .values(processing_status="extracting")
-                )
-                extraction_id = self._id()
-                connection.execute(
-                    insert(extraction_runs).values(
-                        id=extraction_id,
-                        document_version_id=version_id,
-                        input_fingerprint=input_fingerprint,
-                        extractor_name="pdfplumber-text",
-                        extractor_version="1",
-                        method="text",
-                        status="running",
-                    )
-                )
-                bundle = self._extraction_router.extract(BytesIO(content))
-                if bundle.requires_ocr:
-                    connection.execute(
-                        update(extraction_runs)
-                        .where(extraction_runs.c.id == extraction_id)
-                        .values(status="needs_ocr")
-                    )
-                    connection.execute(
-                        update(document_versions)
-                        .where(document_versions.c.id == version_id)
-                        .values(processing_status="needs_ocr")
-                    )
-                else:
-                    created_facts, created_reviews = self._record_facts(
-                        connection,
-                        extraction_id=extraction_id,
-                        input_fingerprint=input_fingerprint,
-                        bundle=bundle,
-                    )
-                    fact_count += created_facts
-                    review_count += created_reviews
-                    connection.execute(
-                        update(extraction_runs)
-                        .where(extraction_runs.c.id == extraction_id)
-                        .values(status="completed")
-                    )
-                    connection.execute(
-                        update(document_versions)
-                        .where(document_versions.c.id == version_id)
-                        .values(processing_status="extracted")
-                    )
-                connection.execute(
-                    update(processing_tasks)
-                    .where(processing_tasks.c.id == task_id)
-                    .values(status="completed")
-                )
+                deduplicated_count += deduplicated
+                fact_count += created_facts
+                review_count += created_reviews
 
             status: RunStatus
             if failure_count:
@@ -275,6 +208,84 @@ class RunOrchestrator:
                 facts=fact_count,
                 reviews=review_count,
                 failures=failure_count,
+                discovered_documents=discovered,
+            )
+
+    def run_local(
+        self,
+        *,
+        source_code: str,
+        correlation_id: str,
+        file_path: Path,
+        document_type: str = "programa_monterrico",
+    ) -> RunResult:
+        """Process one local PDF without constructing or invoking network adapters."""
+        if not correlation_id.strip():
+            raise ValueError("correlation_id must be nonempty")
+        try:
+            source = self._sources[source_code]
+        except KeyError as exc:
+            raise ValueError(f"unknown source_code: {source_code}") from exc
+        resolved = file_path.expanduser().resolve(strict=True)
+        content = resolved.read_bytes()
+        if b"%PDF-" not in content[:1024]:
+            raise ValueError("local file is not a PDF")
+        digest = sha256(content).hexdigest()
+        canonical_url = f"local://sha256/{digest}"
+        discovered = (
+            DiscoveredDocument(
+                url=canonical_url,
+                document_type=document_type,
+                link_context=resolved.name,
+            ),
+        )
+
+        with UnitOfWork(self._engine) as uow:
+            connection = uow.connection
+            source_id = self._get_or_create_source(connection, source)
+            previous = self._existing_result(connection, correlation_id)
+            if previous is not None:
+                return previous
+            run_id = self._id()
+            connection.execute(
+                insert(crawl_runs).values(
+                    id=run_id,
+                    source_id=source_id,
+                    correlation_id=correlation_id,
+                    status="running",
+                    started_at=self._clock(),
+                )
+            )
+            stored = self._blob_store.put_if_absent(BytesIO(content), digest)
+            self._record_blob(connection, stored.storage_key, digest, stored.byte_size)
+            version_id = self._record_local_document(
+                connection,
+                source_id=source_id,
+                run_id=run_id,
+                canonical_url=canonical_url,
+                document_type=document_type,
+                original_filename=resolved.name,
+                blob_sha256=digest,
+            )
+            deduplicated, fact_count, review_count = self._process_document_version(
+                connection,
+                run_id=run_id,
+                version_id=version_id,
+                content=content,
+                blob_sha256=digest,
+            )
+            status: RunStatus = "completed_with_reviews" if review_count else "completed"
+            return self._finish(
+                connection,
+                run_id=run_id,
+                source_id=source_id,
+                status=status,
+                discovered=1,
+                downloaded=0,
+                deduplicated=deduplicated,
+                facts=fact_count,
+                reviews=review_count,
+                failures=0,
                 discovered_documents=discovered,
             )
 
@@ -324,6 +335,8 @@ class RunOrchestrator:
     def _evaluate_policy(
         self, connection: Connection, source_id: str, url: str
     ) -> PolicyDecision:
+        if self._policy_gate is None:
+            raise RuntimeError("network run requires a PolicyGate")
         decision = self._policy_gate.evaluate(url)
         status = "allowed" if decision.allowed else "denied"
         connection.execute(
@@ -339,6 +352,8 @@ class RunOrchestrator:
         return decision
 
     def _fetch(self, connection: Connection, run_id: str, url: str) -> httpx.Response:
+        if self._http_client is None:
+            raise RuntimeError("network run requires a ResponsibleHttpClient")
         response = self._http_client.fetch(url)
         attempt = int(response.extensions.get("benter_attempt_count", 1))
         outcome = "success" if 200 <= response.status_code < 300 else "permanent_error"
@@ -511,6 +526,147 @@ class RunOrchestrator:
             )
         return cast(str, document_id), cast(str, version_id)
 
+    def _record_local_document(
+        self,
+        connection: Connection,
+        *,
+        source_id: str,
+        run_id: str,
+        canonical_url: str,
+        document_type: str,
+        original_filename: str,
+        blob_sha256: str,
+    ) -> str:
+        now = self._clock()
+        document_id = connection.scalar(
+            select(documents.c.id).where(
+                and_(
+                    documents.c.source_id == source_id,
+                    documents.c.canonical_url == canonical_url,
+                )
+            )
+        )
+        if document_id is None:
+            document_id = self._id()
+            connection.execute(
+                insert(documents).values(
+                    id=document_id,
+                    source_id=source_id,
+                    canonical_url=canonical_url,
+                    document_type=document_type,
+                    first_seen_at=now,
+                    last_seen_at=now,
+                )
+            )
+        else:
+            connection.execute(
+                update(documents)
+                .where(documents.c.id == document_id)
+                .values(last_seen_at=now)
+            )
+        version_id = connection.scalar(
+            select(document_versions.c.id).where(
+                and_(
+                    document_versions.c.document_id == document_id,
+                    document_versions.c.blob_sha256 == blob_sha256,
+                )
+            )
+        )
+        if version_id is None:
+            version_id = self._id()
+            connection.execute(
+                insert(document_versions).values(
+                    id=version_id,
+                    document_id=document_id,
+                    blob_sha256=blob_sha256,
+                    crawl_run_id=run_id,
+                    original_filename=original_filename,
+                    detected_at=now,
+                    downloaded_at=None,
+                    processing_status="pending",
+                )
+            )
+        return cast(str, version_id)
+
+    def _process_document_version(
+        self,
+        connection: Connection,
+        *,
+        run_id: str,
+        version_id: str,
+        content: bytes,
+        blob_sha256: str,
+    ) -> tuple[int, int, int]:
+        input_fingerprint = sha256(f"{blob_sha256}:pdf-text:2".encode()).hexdigest()
+        existing_task = connection.execute(
+            select(processing_tasks.c.status).where(
+                processing_tasks.c.idempotency_key == input_fingerprint
+            )
+        ).first()
+        if existing_task is not None and existing_task.status == "completed":
+            return 1, 0, 0
+
+        task_id = self._id()
+        connection.execute(
+            insert(processing_tasks).values(
+                id=task_id,
+                crawl_run_id=run_id,
+                document_version_id=version_id,
+                idempotency_key=input_fingerprint,
+                task_type="extract_pdf_text",
+                status="running",
+                attempt_count=1,
+            )
+        )
+        connection.execute(
+            update(document_versions)
+            .where(document_versions.c.id == version_id)
+            .values(processing_status="extracting")
+        )
+        extraction_id = self._id()
+        connection.execute(
+            insert(extraction_runs).values(
+                id=extraction_id,
+                document_version_id=version_id,
+                input_fingerprint=input_fingerprint,
+                extractor_name="pdfplumber-hipico-text",
+                extractor_version="2",
+                method="text",
+                status="running",
+            )
+        )
+        bundle = self._extraction_router.extract(BytesIO(content))
+        fact_count = 0
+        review_count = 0
+        if bundle.requires_ocr:
+            extraction_status = "needs_ocr"
+            processing_status = "needs_ocr"
+        else:
+            fact_count, review_count = self._record_facts(
+                connection,
+                extraction_id=extraction_id,
+                input_fingerprint=input_fingerprint,
+                bundle=bundle,
+            )
+            extraction_status = "completed"
+            processing_status = "extracted"
+        connection.execute(
+            update(extraction_runs)
+            .where(extraction_runs.c.id == extraction_id)
+            .values(status=extraction_status)
+        )
+        connection.execute(
+            update(document_versions)
+            .where(document_versions.c.id == version_id)
+            .values(processing_status=processing_status)
+        )
+        connection.execute(
+            update(processing_tasks)
+            .where(processing_tasks.c.id == task_id)
+            .values(status="completed")
+        )
+        return 0, fact_count, review_count
+
     def _record_facts(
         self,
         connection: Connection,
@@ -520,53 +676,106 @@ class RunOrchestrator:
         bundle: ExtractionBundle,
     ) -> tuple[int, int]:
         review_count = 0
+        if bundle.facts:
+            for index, candidate in enumerate(bundle.facts):
+                fingerprint = sha256(
+                    f"{input_fingerprint}:{index}:{candidate.subject_key}:"
+                    f"{candidate.normalized_value}".encode()
+                ).hexdigest()
+                requires_review = (
+                    candidate.requires_review
+                    or candidate.confidence < self._review_threshold
+                )
+                if self._store_fact(
+                    connection,
+                    extraction_id=extraction_id,
+                    fingerprint=fingerprint,
+                    fact_type=candidate.fact_type,
+                    subject_key=candidate.subject_key,
+                    normalized_value=candidate.normalized_value,
+                    raw_value=candidate.raw_value,
+                    confidence=candidate.confidence,
+                    requires_review=requires_review,
+                    evidence=candidate.evidence,
+                ):
+                    review_count += 1
+            return len(bundle.facts), review_count
+
         for index, evidence in enumerate(bundle.evidence):
             fingerprint = sha256(
                 f"{input_fingerprint}:{index}:{evidence.page_number}:{evidence.text}".encode()
             ).hexdigest()
-            fact_id = self._id()
             requires_review = (
                 evidence.requires_review or evidence.confidence < self._review_threshold
             )
-            connection.execute(
-                insert(extracted_facts).values(
-                    id=fact_id,
-                    extraction_run_id=extraction_id,
-                    fact_fingerprint=fingerprint,
-                    fact_type="pdf_text",
-                    subject_key=f"page:{evidence.page_number}:word:{index}",
-                    normalized_value=evidence.text.strip(),
-                    raw_value=evidence.text,
-                    confidence=evidence.confidence,
-                    requires_review=requires_review,
-                )
+            if self._store_fact(
+                connection,
+                extraction_id=extraction_id,
+                fingerprint=fingerprint,
+                fact_type="pdf_text",
+                subject_key=f"page:{evidence.page_number}:word:{index}",
+                normalized_value=evidence.text.strip(),
+                raw_value=evidence.text,
+                confidence=evidence.confidence,
+                requires_review=requires_review,
+                evidence=evidence,
+            ):
+                review_count += 1
+        return len(bundle.evidence), review_count
+
+    def _store_fact(
+        self,
+        connection: Connection,
+        *,
+        extraction_id: str,
+        fingerprint: str,
+        fact_type: str,
+        subject_key: str,
+        normalized_value: str,
+        raw_value: str,
+        confidence: float,
+        requires_review: bool,
+        evidence: TextEvidence,
+    ) -> bool:
+        fact_id = self._id()
+        connection.execute(
+            insert(extracted_facts).values(
+                id=fact_id,
+                extraction_run_id=extraction_id,
+                fact_fingerprint=fingerprint,
+                fact_type=fact_type,
+                subject_key=subject_key,
+                normalized_value=normalized_value,
+                raw_value=raw_value,
+                confidence=confidence,
+                requires_review=requires_review,
             )
+        )
+        connection.execute(
+            insert(fact_evidence).values(
+                id=self._id(),
+                fact_id=fact_id,
+                page_number=evidence.page_number,
+                bbox_x0=evidence.bbox.x0,
+                bbox_y0=evidence.bbox.top,
+                bbox_x1=evidence.bbox.x1,
+                bbox_y1=evidence.bbox.bottom,
+                snippet=evidence.text[:500],
+                extraction_method=evidence.method,
+            )
+        )
+        if requires_review:
+            reason = "extractor_flagged" if evidence.requires_review else "low_confidence"
             connection.execute(
-                insert(fact_evidence).values(
+                insert(review_items).values(
                     id=self._id(),
                     fact_id=fact_id,
-                    page_number=evidence.page_number,
-                    bbox_x0=evidence.bbox.x0,
-                    bbox_y0=evidence.bbox.top,
-                    bbox_x1=evidence.bbox.x1,
-                    bbox_y1=evidence.bbox.bottom,
-                    snippet=evidence.text[:500],
-                    extraction_method=evidence.method,
+                    status="pending",
+                    reason_code=reason,
+                    created_at=self._clock(),
                 )
             )
-            if requires_review:
-                review_count += 1
-                reason = "extractor_flagged" if evidence.requires_review else "low_confidence"
-                connection.execute(
-                    insert(review_items).values(
-                        id=self._id(),
-                        fact_id=fact_id,
-                        status="pending",
-                        reason_code=reason,
-                        created_at=self._clock(),
-                    )
-                )
-        return len(bundle.evidence), review_count
+        return requires_review
 
     def _finish(
         self,
