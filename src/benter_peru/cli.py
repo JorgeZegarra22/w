@@ -26,6 +26,7 @@ from benter_peru.discovery import HtmlDocumentDiscoverer, SourceDefinition
 from benter_peru.entities.resolver import EntityResolver
 from benter_peru.extraction.identity import EXTRACTOR_NAME, EXTRACTOR_VERSION
 from benter_peru.extraction.router import ExtractionRouter
+from benter_peru.history.importer import HistoryImporter
 from benter_peru.http.client import HttpClientConfig, ResponsibleHttpClient
 from benter_peru.ids import new_ulid
 from benter_peru.orchestrator import RunOrchestrator, RunResult
@@ -41,6 +42,10 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--local-file", type=Path)
     resolve = subcommands.add_parser("resolve", help="resolve extracted facts into entities")
     resolve.add_argument("--sha", required=True)
+    history = subcommands.add_parser("history", help="manage historical race results")
+    history_commands = history.add_subparsers(dest="history_command", required=True)
+    history_import = history_commands.add_parser("import", help="import a strict CSV file")
+    history_import.add_argument("--file", type=Path, required=True)
     return parser
 
 
@@ -188,6 +193,16 @@ def _resolve(config: RuntimeConfig, sha256: str) -> dict[str, Any]:
         engine.dispose()
 
 
+def _import_history(config: RuntimeConfig, path: Path) -> dict[str, Any]:
+    config.database_path.parent.mkdir(parents=True, exist_ok=True)
+    engine = create_database_engine(config.database_url)
+    try:
+        upgrade_database(engine)
+        return asdict(HistoryImporter(engine).import_csv(path))
+    finally:
+        engine.dispose()
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     arguments = build_parser().parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
@@ -197,6 +212,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if arguments.command == "resolve":
         report = _resolve(RuntimeConfig.from_env(), arguments.sha)
+        print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+    if arguments.command == "history" and arguments.history_command == "import":
+        report = _import_history(RuntimeConfig.from_env(), arguments.file)
         print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
         return 0
     raise AssertionError("unreachable command")

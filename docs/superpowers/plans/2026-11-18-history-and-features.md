@@ -1,5 +1,7 @@
 # History Ingestion and Feature Engine Implementation Plan
 
+**Implementation status:** COMPLETED — 2026-11-18 (`81 passed`, Ruff and Mypy clean)
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Import auditable historical race results from strict CSV files and calculate leakage-safe horse performance features for a target race.

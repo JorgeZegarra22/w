@@ -13,6 +13,8 @@ EXPECTED_TABLES = {
     "fact_evidence",
     "fetch_attempts",
     "http_cache_entries",
+    "history_import_batches",
+    "horse_race_results",
     "horses",
     "jockeys",
     "processing_tasks",
@@ -52,6 +54,8 @@ EXPECTED_UNIQUE_CONSTRAINTS = {
     "run_reports": {("crawl_run_id",)},
     "run_metrics": {("run_report_id", "metric_name")},
     "horses": {("normalized_name",)},
+    "history_import_batches": {("file_sha256",)},
+    "horse_race_results": {("row_fingerprint",)},
     "jockeys": {("normalized_name",)},
     "trainers": {("normalized_name",)},
     "studs": {("normalized_name",)},
@@ -62,6 +66,11 @@ EXPECTED_UNIQUE_CONSTRAINTS = {
 EXPECTED_INDEXES = {
     "crawl_runs": {"ix_crawl_runs_source_id_started_at"},
     "document_versions": {"ix_document_versions_processing_status"},
+    "horse_race_results": {
+        "ix_horse_results_horse_date",
+        "ix_horse_results_horse_distance_date",
+        "ix_horse_results_horse_surface_date",
+    },
     "documents": {
         "ix_documents_first_seen_at",
         "ix_documents_last_seen_at",

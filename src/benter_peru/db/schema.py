@@ -631,3 +631,79 @@ race_entries = Table(
     CheckConstraint("mandil > 0", name="mandil_positive"),
     CheckConstraint("weight > 0", name="weight_positive"),
 )
+
+history_import_batches = Table(
+    "history_import_batches",
+    metadata,
+    _ulid("id", primary_key=True),
+    _sha256("file_sha256"),
+    Column("source_filename", Text, nullable=False),
+    Column("file_format", String(20), nullable=False),
+    Column("row_count", Integer, nullable=False),
+    Column("imported_at", DateTime(timezone=True), nullable=False),
+    UniqueConstraint("file_sha256", name="uq_history_import_batches_file_sha256"),
+    CheckConstraint("length(id) = 26", name="id_length"),
+    CheckConstraint("length(file_sha256) = 64", name="file_sha256_length"),
+    CheckConstraint("file_sha256 = lower(file_sha256)", name="file_sha256_lowercase"),
+    CheckConstraint("file_format = 'csv'", name="file_format_csv"),
+    CheckConstraint("row_count > 0", name="row_count_positive"),
+)
+
+horse_race_results = Table(
+    "horse_race_results",
+    metadata,
+    _ulid("id", primary_key=True),
+    Column(
+        "import_batch_id",
+        String(26),
+        ForeignKey("history_import_batches.id", name="fk_horse_result_import_batch"),
+        nullable=False,
+    ),
+    Column(
+        "horse_id",
+        String(26),
+        ForeignKey("horses.id", name="fk_horse_result_horse"),
+        nullable=False,
+    ),
+    Column("race_date", Date, nullable=False),
+    Column("finishing_position", Integer, nullable=False),
+    Column("distance_meters", Integer, nullable=False),
+    Column("elapsed_time_seconds", Numeric(9, 3), nullable=False),
+    Column("surface", String(20), nullable=False),
+    Column("track_condition", String(50), nullable=False),
+    Column("meeting_code", String(20)),
+    Column("race_number", Integer),
+    _sha256("row_fingerprint"),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    UniqueConstraint("row_fingerprint", name="uq_horse_race_results_row_fingerprint"),
+    CheckConstraint("length(id) = 26", name="id_length"),
+    CheckConstraint("finishing_position > 0", name="position_positive"),
+    CheckConstraint("distance_meters > 0", name="distance_positive"),
+    CheckConstraint("elapsed_time_seconds > 0", name="elapsed_time_positive"),
+    CheckConstraint("surface IN ('arena', 'cesped')", name="surface_values"),
+    CheckConstraint(
+        "length(trim(track_condition)) > 0", name="track_condition_nonempty"
+    ),
+    CheckConstraint("race_number IS NULL OR race_number > 0", name="race_number_positive"),
+    CheckConstraint("length(row_fingerprint) = 64", name="row_fingerprint_length"),
+    CheckConstraint(
+        "row_fingerprint = lower(row_fingerprint)", name="row_fingerprint_lowercase"
+    ),
+)
+Index(
+    "ix_horse_results_horse_date",
+    horse_race_results.c.horse_id,
+    horse_race_results.c.race_date,
+)
+Index(
+    "ix_horse_results_horse_distance_date",
+    horse_race_results.c.horse_id,
+    horse_race_results.c.distance_meters,
+    horse_race_results.c.race_date,
+)
+Index(
+    "ix_horse_results_horse_surface_date",
+    horse_race_results.c.horse_id,
+    horse_race_results.c.surface,
+    horse_race_results.c.race_date,
+)

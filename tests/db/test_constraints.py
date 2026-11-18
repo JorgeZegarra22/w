@@ -1,5 +1,6 @@
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from decimal import Decimal
 
 import pytest
 from sqlalchemy import Connection, insert
@@ -14,6 +15,8 @@ from benter_peru.db.schema import (
     extracted_facts,
     extraction_runs,
     fact_evidence,
+    history_import_batches,
+    horse_race_results,
     horses,
     jockeys,
     processing_tasks,
@@ -398,3 +401,60 @@ def test_race_identity_and_entry_mandil_are_unique(seeded_connection: Connection
                 **entry_values,
             )
         )
+
+
+@pytest.mark.parametrize(
+    "invalid_values",
+    [
+        {"finishing_position": 0},
+        {"distance_meters": 0},
+        {"elapsed_time_seconds": Decimal("0")},
+        {"surface": "barro"},
+        {"track_condition": ""},
+        {"race_number": 0},
+    ],
+)
+def test_historical_result_constraints_reject_invalid_values(
+    migrated_engine: Engine, invalid_values: dict[str, object]
+) -> None:
+    horse_id = "01J00000000000000000000501"
+    batch_id = "01J00000000000000000000502"
+    with migrated_engine.begin() as connection:
+        connection.execute(
+            insert(horses).values(
+                id=horse_id,
+                canonical_name="WAYTT",
+                normalized_name="waytt",
+                confirmation_status="confirmed",
+                created_at=OBSERVED_AT,
+            )
+        )
+        connection.execute(
+            insert(history_import_batches).values(
+                id=batch_id,
+                file_sha256="c" * 64,
+                source_filename="history.csv",
+                file_format="csv",
+                row_count=1,
+                imported_at=OBSERVED_AT,
+            )
+        )
+    values: dict[str, object] = {
+        "id": "01J00000000000000000000503",
+        "import_batch_id": batch_id,
+        "horse_id": horse_id,
+        "race_date": date(2026, 10, 24),
+        "finishing_position": 1,
+        "distance_meters": 1000,
+        "elapsed_time_seconds": Decimal("58.940"),
+        "surface": "arena",
+        "track_condition": "seca",
+        "meeting_code": "202643",
+        "race_number": 3,
+        "row_fingerprint": "d" * 64,
+        "created_at": OBSERVED_AT,
+    }
+    values.update(invalid_values)
+
+    with pytest.raises(IntegrityError), migrated_engine.begin() as connection:
+        connection.execute(insert(horse_race_results).values(**values))

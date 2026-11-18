@@ -24,3 +24,13 @@ def test_cli_accepts_entity_resolution_by_sha() -> None:
 
     assert arguments.command == "resolve"
     assert arguments.sha == sha256
+
+
+def test_cli_accepts_history_import() -> None:
+    arguments = build_parser().parse_args(
+        ["history", "import", "--file", "history.csv"]
+    )
+
+    assert arguments.command == "history"
+    assert arguments.history_command == "import"
+    assert str(arguments.file) == "history.csv"
