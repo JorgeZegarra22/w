@@ -1,0 +1,152 @@
+erDiagram
+    SOURCE_REGISTRY ||--o{ SOURCE_POLICY_SNAPSHOTS : governs
+    SOURCE_REGISTRY ||--o{ SOURCE_CHECKPOINTS : resumes_from
+    SOURCE_REGISTRY ||--o{ CRAWL_RUNS : executes
+    CRAWL_RUNS ||--o{ FETCH_ATTEMPTS : records
+    CRAWL_RUNS ||--|| RUN_REPORTS : summarizes
+    RUN_REPORTS ||--o{ RUN_METRICS : contains
+    SOURCE_REGISTRY ||--o{ HTTP_CACHE_ENTRIES : caches
+    BLOB_OBJECTS ||--o{ HTTP_CACHE_ENTRIES : stores_body
+    SOURCE_REGISTRY ||--o{ PUBLICATIONS : publishes
+    PUBLICATIONS ||--o{ PUBLICATION_VERSIONS : versions
+    CRAWL_RUNS ||--o{ PUBLICATION_VERSIONS : discovers
+    SOURCE_REGISTRY ||--o{ DOCUMENTS : hosts
+    DOCUMENTS ||--o{ DOCUMENT_VERSIONS : versions
+    BLOB_OBJECTS ||--o{ DOCUMENT_VERSIONS : content
+    CRAWL_RUNS ||--o{ DOCUMENT_VERSIONS : detects
+    PUBLICATION_VERSIONS ||--o{ PUBLICATION_DOCUMENT_LINKS : references
+    DOCUMENTS ||--o{ PUBLICATION_DOCUMENT_LINKS : links
+    DOCUMENT_VERSIONS ||--o{ EXTRACTION_RUNS : processed_by
+    EXTRACTION_RUNS ||--o{ EXTRACTED_FACTS : produces
+    EXTRACTED_FACTS ||--|{ FACT_EVIDENCE : supported_by
+    EXTRACTED_FACTS ||--o| REVIEW_ITEMS : may_require
+    REVIEW_ITEMS ||--o{ REVIEW_DECISIONS : receives
+    CRAWL_RUNS ||--o{ PROCESSING_TASKS : schedules
+    DOCUMENT_VERSIONS ||--o{ PROCESSING_TASKS : targets
+
+    SOURCE_REGISTRY {
+        string id PK
+        string code UK
+        string base_url
+        boolean enabled
+    }
+    SOURCE_POLICY_SNAPSHOTS {
+        string id PK
+        string source_id FK
+        string robots_sha256
+        datetime fetched_at
+        boolean crawl_allowed
+    }
+    SOURCE_CHECKPOINTS {
+        string id PK
+        string source_id FK
+        string checkpoint_key
+        datetime last_success_at
+    }
+    CRAWL_RUNS {
+        string id PK
+        string source_id FK
+        string correlation_id UK
+        string status
+    }
+    FETCH_ATTEMPTS {
+        string id PK
+        string crawl_run_id FK
+        int attempt_no
+        string outcome
+    }
+    RUN_REPORTS {
+        string id PK
+        string crawl_run_id FK
+        string status
+        int failure_count
+    }
+    RUN_METRICS {
+        string id PK
+        string run_report_id FK
+        string metric_name
+        int metric_value
+    }
+    HTTP_CACHE_ENTRIES {
+        string id PK
+        string source_id FK
+        string request_fingerprint UK
+        string body_blob_sha256 FK
+    }
+    PUBLICATIONS {
+        string id PK
+        string source_id FK
+        string canonical_url
+        datetime first_seen_at
+    }
+    PUBLICATION_VERSIONS {
+        string id PK
+        string publication_id FK
+        string crawl_run_id FK
+        string content_sha256
+    }
+    DOCUMENTS {
+        string id PK
+        string source_id FK
+        string canonical_url
+        string document_type
+    }
+    PUBLICATION_DOCUMENT_LINKS {
+        string id PK
+        string publication_version_id FK
+        string document_id FK
+        string discovery_method
+    }
+    BLOB_OBJECTS {
+        string sha256 PK
+        bigint byte_size
+        string storage_key
+        boolean retained_locally
+    }
+    DOCUMENT_VERSIONS {
+        string id PK
+        string document_id FK
+        string blob_sha256 FK
+        string crawl_run_id FK
+        string processing_status
+    }
+    EXTRACTION_RUNS {
+        string id PK
+        string document_version_id FK
+        string input_fingerprint UK
+        string method
+        string status
+    }
+    EXTRACTED_FACTS {
+        string id PK
+        string extraction_run_id FK
+        string fact_fingerprint UK
+        float confidence
+        boolean requires_review
+    }
+    FACT_EVIDENCE {
+        string id PK
+        string fact_id FK
+        int page_number
+        string snippet
+        string extraction_method
+    }
+    REVIEW_ITEMS {
+        string id PK
+        string fact_id FK
+        string status
+        string reason_code
+    }
+    REVIEW_DECISIONS {
+        string id PK
+        string review_item_id FK
+        string decision
+        string reviewer
+    }
+    PROCESSING_TASKS {
+        string id PK
+        string crawl_run_id FK
+        string document_version_id FK
+        string idempotency_key UK
+        string status
+    }

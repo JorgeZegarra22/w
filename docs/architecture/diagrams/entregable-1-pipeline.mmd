@@ -1,0 +1,26 @@
+flowchart LR
+    A[Descubrir publicaciones y enlaces] --> B{Politica y robots permiten acceso?}
+    B -->|No| X[Registrar bloqueo y finalizar sin descargar]
+    B -->|Si| C[Descargar a archivo temporal fuera del repo]
+    C --> D[Calcular SHA-256 durante el streaming]
+    D --> E{Blob ya existe?}
+    E -->|No| F[Promover al almacen por hash]
+    E -->|Si| G[Reutilizar blob existente]
+    F --> H[Registrar documento y version]
+    G --> H
+    H --> I{Extraccion con mismo fingerprint ya existe?}
+    I -->|Si| J[Reutilizar resultado y contar deduplicacion]
+    I -->|No| K[Detectar capa de texto]
+    K -->|Presente| L[Extraer texto, pagina y bounding boxes]
+    K -->|Ausente| M[Marcar OCR requerido y detener esa tarea]
+    L --> N[Normalizar y validar hechos]
+    N --> O[Calcular fingerprint de cada hecho]
+    O --> P[Upsert hecho y evidencia en una transaccion]
+    P --> Q{Confianza menor al umbral?}
+    Q -->|Si| R[Crear item de revision humana]
+    Q -->|No| S[Marcar hecho aceptado automaticamente]
+    J --> T[Actualizar contadores]
+    M --> T
+    R --> T
+    S --> T
+    T --> U[Generar run_report y checkpoint exitoso]

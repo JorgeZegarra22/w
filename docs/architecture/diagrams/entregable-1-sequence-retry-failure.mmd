@@ -1,0 +1,50 @@
+sequenceDiagram
+    autonumber
+    actor Trigger as CLI / Scheduler
+    participant Orch as RunOrchestrator
+    participant Tasks as TaskRepository
+    participant HTTP as ResponsibleHttpClient
+    participant Remote as Fuente remota
+    participant Extract as ExtractionRouter
+    participant Facts as FactValidator
+    participant Queue as Cola de revision
+    participant DB as UnitOfWork / DB
+    participant Obs as RunReporter
+
+    Trigger->>Orch: run(source_code, correlation_id)
+    Orch->>Tasks: claim_or_create(idempotency_key)
+    Tasks-->>Orch: tarea pendiente o reanudada
+
+    alt Fallo transitorio de red
+        loop Mientras queden intentos
+            Orch->>HTTP: fetch(url, attempt_no)
+            HTTP->>Remote: GET limitado
+            Remote-->>HTTP: timeout, 429 o 5xx
+            HTTP->>DB: registrar intento fallido
+            HTTP-->>Orch: error reintentable
+            Orch->>Tasks: programar backoff con jitter
+        end
+        Orch->>Tasks: diferir hasta available_at
+        Orch->>Obs: sumar fallo de red
+    else Error de extraccion
+        Orch->>Extract: extract(document_version)
+        Extract-->>Orch: error clasificado
+        Orch->>Tasks: incrementar intento
+        Orch->>Tasks: reprogramar o marcar fallido
+        Orch->>DB: conservar version y diagnostico
+        Orch->>Obs: sumar fallo de extraccion
+    else Confianza baja
+        Orch->>Extract: extract(document_version)
+        Extract-->>Orch: candidato con evidencia
+        Orch->>Facts: validar y puntuar
+        Facts-->>Orch: requires_review true
+        Orch->>DB: guardar hecho y evidencia
+        Orch->>Queue: upsert por fact_id y motivo
+        Queue-->>Orch: item existente o nuevo
+        Orch->>Obs: sumar revision requerida
+    end
+
+    Orch->>Obs: finalizar corrida parcial
+    Obs->>DB: guardar run_report
+    DB-->>Obs: commit confirmado
+    Obs-->>Trigger: deferred, partial_failure o completed_with_reviews

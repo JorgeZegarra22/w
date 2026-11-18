@@ -1,0 +1,75 @@
+flowchart LR
+    classDef boundary fill:#eef4ff,stroke:#4a6fa5,color:#17213a
+    classDef core fill:#f4f0ff,stroke:#7557a8,color:#211834
+    classDef data fill:#edf8f0,stroke:#39734b,color:#17301f
+    classDef external fill:#fff6e8,stroke:#9a6a24,color:#3d290e
+    classDef cross fill:#f7f7f7,stroke:#686868,color:#222
+
+    subgraph EXT[Fuentes externas]
+        EIH[El Informativo Hipico]:::external
+        DRIVE[Google Drive / PDF autorizado]:::external
+        ROBOTS[robots.txt y politicas]:::external
+    end
+
+    subgraph ENTRY[Entrada]
+        CLI[CLI / programador]:::boundary
+        CFG[Configuracion y secretos por entorno]:::boundary
+    end
+
+    subgraph APP[Aplicacion: monolito modular]
+        ORCH[Orquestador de corrida]:::core
+        POLICY[Puerta de politicas y robots]:::core
+        HTTP[Cliente HTTP responsable\nrate limit + cache + retry/backoff]:::core
+        DISC[Conector de descubrimiento\nHTML + scripts + fallback dinamico]:::core
+        ACQ[Adquisicion de documentos]:::core
+        DEDUP[Hash SHA-256\ndeduplicacion + versionado]:::core
+        ROUTER[Enrutador de extraccion]:::core
+        TEXT[Extractor de capa de texto\npdfplumber / pypdf]:::core
+        OCR[Adaptador OCR diferido\nno activo en Entregable 1]:::core
+        FACTS[Normalizador y validador de hechos]:::core
+        REVIEW[Cola de revision humana]:::core
+    end
+
+    subgraph DATA[Persistencia]
+        REPO[Repositorios / Unit of Work]:::data
+        DB[(SQLite local\nportable a PostgreSQL)]:::data
+        BLOBS[(Almacen local fuera del repo\nobjetos por hash)]:::data
+    end
+
+    subgraph OBS[Observabilidad transversal]
+        LOGS[Logs JSON estructurados]:::cross
+        METRICS[Contadores exito / fallo]:::cross
+        REPORT[Run report por ejecucion]:::cross
+    end
+
+    CLI --> ORCH
+    CFG --> ORCH
+    CFG --> HTTP
+    ORCH --> POLICY
+    POLICY --> ROBOTS
+    POLICY --> HTTP
+    HTTP --> EIH
+    HTTP --> DRIVE
+    HTTP --> DISC
+    DISC --> ACQ
+    ACQ --> DEDUP
+    DEDUP --> BLOBS
+    DEDUP --> ROUTER
+    ROUTER -->|capa de texto presente| TEXT
+    ROUTER -.->|solo si se aprueba plan B| OCR
+    TEXT --> FACTS
+    OCR -.-> FACTS
+    FACTS -->|confianza suficiente| REPO
+    FACTS -->|confianza baja| REVIEW
+    REVIEW --> REPO
+    ORCH --> REPO
+    HTTP --> REPO
+    DEDUP --> REPO
+    REPO --> DB
+
+    ORCH -.-> LOGS
+    HTTP -.-> LOGS
+    ROUTER -.-> LOGS
+    ORCH -.-> METRICS
+    METRICS -.-> REPORT
+    REPORT -.-> DB

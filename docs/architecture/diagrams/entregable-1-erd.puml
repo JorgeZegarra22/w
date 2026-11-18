@@ -1,0 +1,262 @@
+@startuml Benter_Peru_Entregable_1_ERD
+left to right direction
+hide circle
+skinparam linetype ortho
+skinparam shadowing false
+skinparam entity {
+  BackgroundColor transparent
+  BorderColor #667085
+  FontColor #344054
+}
+
+entity SOURCE_REGISTRY {
+  * id : char(26) <<PK>>
+  --
+  code : varchar <<UK>>
+  name : varchar
+  base_url : varchar
+  rate_limit_ms : integer
+  enabled : boolean
+}
+
+entity SOURCE_POLICY_SNAPSHOTS {
+  * id : char(26) <<PK>>
+  * source_id : char(26) <<FK>>
+  --
+  robots_sha256 : char(64)
+  fetched_at : timestamptz
+  crawl_allowed : boolean
+  policy_status : varchar
+}
+
+entity SOURCE_CHECKPOINTS {
+  * id : char(26) <<PK>>
+  * source_id : char(26) <<FK>>
+  --
+  checkpoint_key : varchar
+  checkpoint_value : text
+  last_success_at : timestamptz
+}
+
+entity CRAWL_RUNS {
+  * id : char(26) <<PK>>
+  * source_id : char(26) <<FK>>
+  --
+  correlation_id : varchar <<UK>>
+  status : varchar
+  started_at : timestamptz
+  finished_at : timestamptz
+}
+
+entity FETCH_ATTEMPTS {
+  * id : char(26) <<PK>>
+  * crawl_run_id : char(26) <<FK>>
+  --
+  url : text
+  attempt_no : integer
+  response_status : integer
+  outcome : varchar
+  error_code : varchar
+}
+
+entity HTTP_CACHE_ENTRIES {
+  * id : char(26) <<PK>>
+  * source_id : char(26) <<FK>>
+  * body_blob_sha256 : char(64) <<FK>>
+  --
+  request_fingerprint : char(64) <<UK>>
+  canonical_url : text
+  etag : varchar
+  last_modified : varchar
+  expires_at : timestamptz
+}
+
+entity PUBLICATIONS {
+  * id : char(26) <<PK>>
+  * source_id : char(26) <<FK>>
+  --
+  canonical_url : text
+  publication_type : varchar
+  first_seen_at : timestamptz
+  last_seen_at : timestamptz
+}
+
+entity PUBLICATION_VERSIONS {
+  * id : char(26) <<PK>>
+  * publication_id : char(26) <<FK>>
+  * crawl_run_id : char(26) <<FK>>
+  --
+  content_sha256 : char(64)
+  title : text
+  published_at : timestamptz
+  detected_at : timestamptz
+}
+
+entity DOCUMENTS {
+  * id : char(26) <<PK>>
+  * source_id : char(26) <<FK>>
+  --
+  canonical_url : text
+  document_type : varchar
+  first_seen_at : timestamptz
+  last_seen_at : timestamptz
+}
+
+entity PUBLICATION_DOCUMENT_LINKS {
+  * id : char(26) <<PK>>
+  * publication_version_id : char(26) <<FK>>
+  * document_id : char(26) <<FK>>
+  --
+  discovered_url : text
+  link_context : text
+  discovery_method : varchar
+}
+
+entity BLOB_OBJECTS {
+  * sha256 : char(64) <<PK>>
+  --
+  byte_size : bigint
+  media_type : varchar
+  storage_key : text
+  first_stored_at : timestamptz
+  retained_locally : boolean
+}
+
+entity DOCUMENT_VERSIONS {
+  * id : char(26) <<PK>>
+  * document_id : char(26) <<FK>>
+  * blob_sha256 : char(64) <<FK>>
+  * crawl_run_id : char(26) <<FK>>
+  --
+  original_filename : text
+  detected_at : timestamptz
+  downloaded_at : timestamptz
+  processing_status : varchar
+}
+
+entity EXTRACTION_RUNS {
+  * id : char(26) <<PK>>
+  * document_version_id : char(26) <<FK>>
+  --
+  input_fingerprint : char(64) <<UK>>
+  extractor_name : varchar
+  extractor_version : varchar
+  method : varchar
+  status : varchar
+}
+
+entity EXTRACTED_FACTS {
+  * id : char(26) <<PK>>
+  * extraction_run_id : char(26) <<FK>>
+  --
+  fact_fingerprint : char(64) <<UK>>
+  fact_type : varchar
+  subject_key : varchar
+  normalized_value : text
+  raw_value : text
+  confidence : numeric
+  requires_review : boolean
+}
+
+entity FACT_EVIDENCE {
+  * id : char(26) <<PK>>
+  * fact_id : char(26) <<FK>>
+  --
+  page_number : integer
+  bbox_x0 : numeric
+  bbox_y0 : numeric
+  bbox_x1 : numeric
+  bbox_y1 : numeric
+  snippet : text
+  extraction_method : varchar
+}
+
+entity REVIEW_ITEMS {
+  * id : char(26) <<PK>>
+  * fact_id : char(26) <<FK>>
+  --
+  status : varchar
+  reason_code : varchar
+  created_at : timestamptz
+  resolved_at : timestamptz
+}
+
+entity REVIEW_DECISIONS {
+  * id : char(26) <<PK>>
+  * review_item_id : char(26) <<FK>>
+  --
+  decision : varchar
+  reviewer : varchar
+  note : text
+  decided_at : timestamptz
+}
+
+entity PROCESSING_TASKS {
+  * id : char(26) <<PK>>
+  * crawl_run_id : char(26) <<FK>>
+  * document_version_id : char(26) <<FK>>
+  --
+  idempotency_key : char(64) <<UK>>
+  task_type : varchar
+  status : varchar
+  attempt_count : integer
+  available_at : timestamptz
+  last_error_code : varchar
+}
+
+entity RUN_REPORTS {
+  * id : char(26) <<PK>>
+  * crawl_run_id : char(26) <<FK, UK>>
+  --
+  status : varchar
+  discovered_count : integer
+  downloaded_count : integer
+  deduplicated_count : integer
+  fact_count : integer
+  review_count : integer
+  failure_count : integer
+}
+
+entity RUN_METRICS {
+  * id : char(26) <<PK>>
+  * run_report_id : char(26) <<FK>>
+  --
+  metric_name : varchar
+  metric_value : integer
+}
+
+SOURCE_REGISTRY ||--o{ SOURCE_POLICY_SNAPSHOTS : governs
+SOURCE_REGISTRY ||--o{ SOURCE_CHECKPOINTS : resumes_from
+SOURCE_REGISTRY ||--o{ CRAWL_RUNS : executes
+CRAWL_RUNS ||--o{ FETCH_ATTEMPTS : records
+CRAWL_RUNS ||--|| RUN_REPORTS : summarizes
+RUN_REPORTS ||--o{ RUN_METRICS : contains
+SOURCE_REGISTRY ||--o{ HTTP_CACHE_ENTRIES : caches
+BLOB_OBJECTS ||--o{ HTTP_CACHE_ENTRIES : stores_body
+SOURCE_REGISTRY ||--o{ PUBLICATIONS : publishes
+PUBLICATIONS ||--o{ PUBLICATION_VERSIONS : versions
+CRAWL_RUNS ||--o{ PUBLICATION_VERSIONS : discovers
+SOURCE_REGISTRY ||--o{ DOCUMENTS : hosts
+DOCUMENTS ||--o{ DOCUMENT_VERSIONS : versions
+BLOB_OBJECTS ||--o{ DOCUMENT_VERSIONS : content
+CRAWL_RUNS ||--o{ DOCUMENT_VERSIONS : detects
+PUBLICATION_VERSIONS ||--o{ PUBLICATION_DOCUMENT_LINKS : references
+DOCUMENTS ||--o{ PUBLICATION_DOCUMENT_LINKS : links
+DOCUMENT_VERSIONS ||--o{ EXTRACTION_RUNS : processed_by
+EXTRACTION_RUNS ||--o{ EXTRACTED_FACTS : produces
+EXTRACTED_FACTS ||--|{ FACT_EVIDENCE : supported_by
+EXTRACTED_FACTS ||--o| REVIEW_ITEMS : may_require
+REVIEW_ITEMS ||--o{ REVIEW_DECISIONS : receives
+CRAWL_RUNS ||--o{ PROCESSING_TASKS : schedules
+DOCUMENT_VERSIONS ||--o{ PROCESSING_TASKS : targets
+
+note bottom of BLOB_OBJECTS
+  El archivo real queda fuera del repositorio.
+  La base conserva hash, metadatos y storage_key local.
+end note
+
+note bottom of EXTRACTED_FACTS
+  La unicidad de fact_fingerprint hace
+  idempotente la persistencia de hechos.
+end note
+@enduml

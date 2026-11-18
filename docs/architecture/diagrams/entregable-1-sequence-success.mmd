@@ -1,0 +1,66 @@
+sequenceDiagram
+    autonumber
+    actor Trigger as CLI / Scheduler
+    participant Orch as RunOrchestrator
+    participant Policy as PolicyGate
+    participant Conn as ElInformativoConnector
+    participant HTTP as ResponsibleHttpClient
+    participant Site as Fuente remota
+    participant UoW as UnitOfWork / DB
+    participant Blob as LocalBlobStore
+    participant Extract as ExtractionRouter
+    participant Facts as FactValidator
+    participant Obs as RunReporter
+
+    Trigger->>Orch: run(source_code, correlation_id)
+    Orch->>UoW: begin_run(correlation_id)
+    UoW-->>Orch: crawl_run existente o nuevo
+    Orch->>Policy: evaluate(base_url, user_agent)
+    Policy->>HTTP: fetch robots.txt con cache
+    HTTP->>Site: GET condicional
+    Site-->>HTTP: 200 o 304
+    HTTP-->>Policy: PolicySnapshot
+    Policy-->>Orch: allowed + crawl_delay
+
+    Orch->>Conn: discover(run_context)
+    Conn->>HTTP: fetch pagina indice
+    HTTP->>Site: GET con User-Agent y rate limit
+    Site-->>HTTP: HTML
+    HTTP-->>Conn: FetchResult + cache metadata
+    Conn-->>Orch: publicaciones y documentos canonicos
+
+    loop Cada publicacion descubierta
+        Orch->>UoW: upsert_publication(source, canonical_url)
+        Orch->>UoW: upsert_publication_version(content_sha256)
+    end
+
+    loop Cada documento descubierto
+        Orch->>HTTP: stream(document_url)
+        HTTP->>Site: GET condicional y limitado
+        Site-->>HTTP: bytes del PDF
+        HTTP-->>Orch: stream + metadatos
+        Orch->>Blob: put_if_absent(stream, sha256)
+        Blob-->>Orch: StoredBlob existente o nuevo
+        Orch->>UoW: register_document_version(document_id, sha256)
+        UoW-->>Orch: version existente o nueva
+
+        alt Extraccion ya registrada para el fingerprint
+            Orch->>UoW: load_extraction(input_fingerprint)
+            UoW-->>Orch: resultado reutilizado
+        else Version nueva o extractor actualizado
+            Orch->>Extract: extract(document_version)
+            Extract-->>Orch: fact_candidates con pagina, bbox y snippet
+            Orch->>Facts: validate_and_score(candidates)
+            Facts-->>Orch: validated_facts
+            Orch->>UoW: persist facts + evidence + review flags
+            UoW-->>Orch: commit atomico con upserts
+        end
+    end
+
+    Orch->>Obs: finalize(crawl_run_id, counters)
+    Obs->>UoW: save run_report + checkpoint
+    UoW-->>Obs: committed
+    Obs-->>Orch: RunReport
+    Orch-->>Trigger: completed o completed_with_reviews
+
+    Note over UoW,Blob: Repetir la corrida reutiliza correlation keys, hashes y fingerprints; no duplica filas ni archivos.
