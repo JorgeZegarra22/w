@@ -4,6 +4,7 @@ import argparse
 import json
 import logging
 from collections.abc import Sequence
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
@@ -22,6 +23,8 @@ from benter_peru.db.schema import (
     fact_evidence,
 )
 from benter_peru.discovery import HtmlDocumentDiscoverer, SourceDefinition
+from benter_peru.entities.resolver import EntityResolver
+from benter_peru.extraction.identity import EXTRACTOR_NAME, EXTRACTOR_VERSION
 from benter_peru.extraction.router import ExtractionRouter
 from benter_peru.http.client import HttpClientConfig, ResponsibleHttpClient
 from benter_peru.ids import new_ulid
@@ -36,6 +39,8 @@ def build_parser() -> argparse.ArgumentParser:
     run = subcommands.add_parser("run", help="run one configured source")
     run.add_argument("--source", required=True, choices=("elinformativohipico",))
     run.add_argument("--local-file", type=Path)
+    resolve = subcommands.add_parser("resolve", help="resolve extracted facts into entities")
+    resolve.add_argument("--sha", required=True)
     return parser
 
 
@@ -52,6 +57,26 @@ def _source_definition(config: RuntimeConfig) -> SourceDefinition:
 
 
 def _build_report(engine: Engine, result: RunResult) -> dict[str, Any]:
+    local_sha = next(
+        (
+            item.url.removeprefix("local://sha256/")
+            for item in result.discovered_documents
+            if item.url.startswith("local://sha256/")
+        ),
+        None,
+    )
+    document_filter = (
+        document_versions.c.blob_sha256 == local_sha
+        if local_sha is not None
+        else document_versions.c.crawl_run_id == result.crawl_run_id
+    )
+    fact_filter = document_filter
+    if local_sha is not None:
+        fact_filter = (
+            document_filter
+            & (extraction_runs.c.extractor_name == EXTRACTOR_NAME)
+            & (extraction_runs.c.extractor_version == EXTRACTOR_VERSION)
+        )
     document_query = (
         select(
             documents.c.canonical_url,
@@ -60,7 +85,7 @@ def _build_report(engine: Engine, result: RunResult) -> dict[str, Any]:
             document_versions.c.processing_status,
         )
         .join(document_versions, document_versions.c.document_id == documents.c.id)
-        .where(document_versions.c.crawl_run_id == result.crawl_run_id)
+        .where(document_filter)
     )
     fact_query = (
         select(func.count())
@@ -70,7 +95,7 @@ def _build_report(engine: Engine, result: RunResult) -> dict[str, Any]:
             document_versions,
             document_versions.c.id == extraction_runs.c.document_version_id,
         )
-        .where(document_versions.c.crawl_run_id == result.crawl_run_id)
+        .where(fact_filter)
     )
     evidence_query = (
         select(func.count())
@@ -81,7 +106,7 @@ def _build_report(engine: Engine, result: RunResult) -> dict[str, Any]:
             document_versions,
             document_versions.c.id == extraction_runs.c.document_version_id,
         )
-        .where(document_versions.c.crawl_run_id == result.crawl_run_id)
+        .where(fact_filter)
     )
     with engine.connect() as connection:
         rows = connection.execute(document_query).mappings().all()
@@ -153,11 +178,25 @@ def _run(config: RuntimeConfig, *, local_file: Path | None = None) -> dict[str, 
         engine.dispose()
 
 
+def _resolve(config: RuntimeConfig, sha256: str) -> dict[str, Any]:
+    config.database_path.parent.mkdir(parents=True, exist_ok=True)
+    engine = create_database_engine(config.database_url)
+    try:
+        upgrade_database(engine)
+        return asdict(EntityResolver(engine).resolve_sha(sha256))
+    finally:
+        engine.dispose()
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     arguments = build_parser().parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
     if arguments.command == "run":
         report = _run(RuntimeConfig.from_env(), local_file=arguments.local_file)
+        print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+    if arguments.command == "resolve":
+        report = _resolve(RuntimeConfig.from_env(), arguments.sha)
         print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
         return 0
     raise AssertionError("unreachable command")

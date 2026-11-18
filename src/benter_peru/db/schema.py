@@ -5,6 +5,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Column,
+    Date,
     DateTime,
     ForeignKey,
     Index,
@@ -525,4 +526,108 @@ run_metrics = Table(
     UniqueConstraint("run_report_id", "metric_name", name="uq_run_metrics_report_name"),
     CheckConstraint("length(id) = 26", name="id_length"),
     CheckConstraint("metric_value >= 0", name="metric_value_nonnegative"),
+)
+
+
+def _master_entity_table(name: str) -> Table:
+    return Table(
+        name,
+        metadata,
+        _ulid("id", primary_key=True),
+        Column("canonical_name", String(255), nullable=False),
+        Column("normalized_name", String(255), nullable=False),
+        Column("confirmation_status", String(20), nullable=False),
+        Column("created_at", DateTime(timezone=True), nullable=False),
+        UniqueConstraint("normalized_name", name=f"uq_{name}_normalized_name"),
+        CheckConstraint("length(id) = 26", name="id_length"),
+        CheckConstraint("length(trim(canonical_name)) > 0", name="canonical_name_nonempty"),
+        CheckConstraint("length(trim(normalized_name)) > 0", name="normalized_name_nonempty"),
+        CheckConstraint(
+            "confirmation_status IN ('confirmed', 'unconfirmed')",
+            name="confirmation_status_values",
+        ),
+    )
+
+
+horses = _master_entity_table("horses")
+jockeys = _master_entity_table("jockeys")
+trainers = _master_entity_table("trainers")
+studs = _master_entity_table("studs")
+
+races = Table(
+    "races",
+    metadata,
+    _ulid("id", primary_key=True),
+    Column(
+        "source_document_version_id",
+        String(26),
+        ForeignKey("document_versions.id", name="fk_race_document_version"),
+        nullable=False,
+    ),
+    Column("meeting_code", String(20), nullable=False),
+    Column("race_number", Integer, nullable=False),
+    Column("scheduled_date", Date, nullable=False),
+    Column("distance_meters", Integer, nullable=False),
+    Column("surface", String(30), nullable=False),
+    Column("confirmation_status", String(20), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    UniqueConstraint("meeting_code", "race_number", name="uq_races_meeting_race"),
+    CheckConstraint("length(id) = 26", name="id_length"),
+    CheckConstraint("race_number > 0", name="race_number_positive"),
+    CheckConstraint("distance_meters > 0", name="distance_positive"),
+    CheckConstraint("surface IN ('arena', 'cesped')", name="surface_values"),
+    CheckConstraint(
+        "confirmation_status IN ('confirmed', 'unconfirmed')",
+        name="confirmation_status_values",
+    ),
+)
+
+race_entries = Table(
+    "race_entries",
+    metadata,
+    _ulid("id", primary_key=True),
+    Column(
+        "race_id",
+        String(26),
+        ForeignKey("races.id", name="fk_race_entry_race"),
+        nullable=False,
+    ),
+    Column(
+        "horse_id",
+        String(26),
+        ForeignKey("horses.id", name="fk_race_entry_horse"),
+        nullable=False,
+    ),
+    Column(
+        "jockey_id",
+        String(26),
+        ForeignKey("jockeys.id", name="fk_race_entry_jockey"),
+        nullable=False,
+    ),
+    Column(
+        "trainer_id",
+        String(26),
+        ForeignKey("trainers.id", name="fk_race_entry_trainer"),
+        nullable=False,
+    ),
+    Column(
+        "stud_id",
+        String(26),
+        ForeignKey("studs.id", name="fk_race_entry_stud"),
+        nullable=False,
+    ),
+    Column(
+        "source_fact_id",
+        String(26),
+        ForeignKey("extracted_facts.id", name="fk_race_entry_source_fact"),
+        nullable=False,
+    ),
+    Column("mandil", Integer, nullable=False),
+    Column("weight", Numeric(5, 2), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    UniqueConstraint("source_fact_id", name="uq_race_entries_source_fact"),
+    UniqueConstraint("race_id", "mandil", name="uq_race_entries_race_mandil"),
+    CheckConstraint("length(id) = 26", name="id_length"),
+    CheckConstraint("mandil > 0", name="mandil_positive"),
+    CheckConstraint("weight > 0", name="weight_positive"),
 )

@@ -1,6 +1,6 @@
 # Entregable 3: Entity Resolution and Horse Record Design
 
-**Status:** Proposed for implementation review
+**Status:** Approved and implemented
 
 **Date:** 2026-11-18
 
@@ -8,6 +8,11 @@
 entity tables, resolve the latest structured facts for a document hash, and create
 idempotent race entries without allowing uncertain horse names to contaminate confirmed
 identities.
+
+> **Implementation note (2026-11-18):** the first real-data version `3` run exposed
+> non-linear word ordering in the printed date. That run remains immutable for
+> traceability; the corrected geometric date recovery is version `3.1`. References to
+> version `3` below describe this v3 extractor family, whose resolution target is `3.1`.
 
 ## 1. Goals
 

@@ -13,10 +13,14 @@ EXPECTED_TABLES = {
     "fact_evidence",
     "fetch_attempts",
     "http_cache_entries",
+    "horses",
+    "jockeys",
     "processing_tasks",
     "publication_document_links",
     "publication_versions",
     "publications",
+    "race_entries",
+    "races",
     "review_decisions",
     "review_items",
     "run_metrics",
@@ -24,6 +28,8 @@ EXPECTED_TABLES = {
     "source_checkpoints",
     "source_policy_snapshots",
     "source_registry",
+    "studs",
+    "trainers",
 }
 
 EXPECTED_UNIQUE_CONSTRAINTS = {
@@ -45,6 +51,12 @@ EXPECTED_UNIQUE_CONSTRAINTS = {
     "processing_tasks": {("idempotency_key",)},
     "run_reports": {("crawl_run_id",)},
     "run_metrics": {("run_report_id", "metric_name")},
+    "horses": {("normalized_name",)},
+    "jockeys": {("normalized_name",)},
+    "trainers": {("normalized_name",)},
+    "studs": {("normalized_name",)},
+    "races": {("meeting_code", "race_number")},
+    "race_entries": {("source_fact_id",), ("race_id", "mandil")},
 }
 
 EXPECTED_INDEXES = {

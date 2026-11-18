@@ -16,3 +16,11 @@ def test_cli_accepts_local_file() -> None:
     )
 
     assert str(arguments.local_file) == "program.pdf"
+
+
+def test_cli_accepts_entity_resolution_by_sha() -> None:
+    sha256 = "a" * 64
+    arguments = build_parser().parse_args(["resolve", "--sha", sha256])
+
+    assert arguments.command == "resolve"
+    assert arguments.sha == sha256

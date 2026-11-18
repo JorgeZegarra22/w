@@ -35,6 +35,7 @@ from benter_peru.db.schema import (
 )
 from benter_peru.db.uow import UnitOfWork
 from benter_peru.discovery import DiscoveredDocument, HtmlDocumentDiscoverer, SourceDefinition
+from benter_peru.extraction.identity import EXTRACTOR_NAME, EXTRACTOR_VERSION
 from benter_peru.extraction.models import ExtractionBundle, TextEvidence
 from benter_peru.http.client import ResponsibleHttpClient
 from benter_peru.ids import new_ulid
@@ -597,7 +598,9 @@ class RunOrchestrator:
         content: bytes,
         blob_sha256: str,
     ) -> tuple[int, int, int]:
-        input_fingerprint = sha256(f"{blob_sha256}:pdf-text:2".encode()).hexdigest()
+        input_fingerprint = sha256(
+            f"{blob_sha256}:{EXTRACTOR_NAME}:{EXTRACTOR_VERSION}".encode()
+        ).hexdigest()
         existing_task = connection.execute(
             select(processing_tasks.c.status).where(
                 processing_tasks.c.idempotency_key == input_fingerprint
@@ -629,8 +632,8 @@ class RunOrchestrator:
                 id=extraction_id,
                 document_version_id=version_id,
                 input_fingerprint=input_fingerprint,
-                extractor_name="pdfplumber-hipico-text",
-                extractor_version="2",
+                extractor_name=EXTRACTOR_NAME,
+                extractor_version=EXTRACTOR_VERSION,
                 method="text",
                 status="running",
             )

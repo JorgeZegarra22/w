@@ -3,6 +3,8 @@
 import json
 import re
 from collections.abc import Mapping, Sequence
+from datetime import date
+from typing import ClassVar
 
 from benter_peru.extraction.models import BoundingBox, StructuredFact, TextEvidence
 
@@ -13,6 +15,20 @@ class HipicoTableExtractor:
     """Extract structured runners from the first race using mandil row anchors."""
 
     _WEIGHT = re.compile(r"^\d{2}\.\d{2}$")
+    _MONTHS: ClassVar[dict[str, int]] = {
+        "ENERO": 1,
+        "FEBRERO": 2,
+        "MARZO": 3,
+        "ABRIL": 4,
+        "MAYO": 5,
+        "JUNIO": 6,
+        "JULIO": 7,
+        "AGOSTO": 8,
+        "SEPTIEMBRE": 9,
+        "OCTUBRE": 10,
+        "NOVIEMBRE": 11,
+        "DICIEMBRE": 12,
+    }
 
     def extract(
         self,
@@ -40,6 +56,13 @@ class HipicoTableExtractor:
             return ()
 
         facts: list[StructuredFact] = []
+        context = self._context_fact(
+            words,
+            page_number=page_number,
+            first_header=first_header,
+        )
+        if context is not None:
+            facts.append(context)
         centers = [self._center_y(anchor) for anchor in anchors]
         for index, anchor in enumerate(anchors):
             lower = (
@@ -84,7 +107,8 @@ class HipicoTableExtractor:
         )
         jockey = self._join_band(words, page_width * 0.56, page_width * 0.67)
         trainer = self._join_band(words, page_width * 0.67, page_width * 0.80)
-        if not horse or not weight or not jockey or not trainer:
+        stud = self._join_band(words, page_width * 0.435, page_width * 0.56)
+        if not horse or not weight or not stud or not jockey or not trainer:
             return None
 
         ordered = sorted(words, key=lambda word: (self._x0(word), self._top(word)))
@@ -109,8 +133,10 @@ class HipicoTableExtractor:
                 "mandil": mandil,
                 "horse_name": horse,
                 "weight": weight,
+                "stud": stud,
                 "jockey": jockey,
                 "trainer": trainer,
+                "horse_requires_review": noisy,
             },
             ensure_ascii=False,
             sort_keys=True,
@@ -123,6 +149,117 @@ class HipicoTableExtractor:
             confidence=confidence,
             requires_review=noisy,
             evidence=evidence,
+        )
+
+    def _context_fact(
+        self,
+        words: Sequence[Word],
+        *,
+        page_number: int,
+        first_header: float,
+    ) -> StructuredFact | None:
+        ordered = sorted(words, key=lambda word: (self._top(word), self._x0(word)))
+        full_text = " ".join(self._text(word) for word in ordered)
+        meeting_match = re.search(r"REUN.{0,12}?(\d{6})", full_text, re.IGNORECASE)
+        scheduled = self._header_date(words, first_header)
+        header_words = [
+            word for word in words if first_header - 2 <= self._top(word) <= first_header + 8
+        ]
+        header_text = " ".join(
+            self._text(word) for word in sorted(header_words, key=self._x0)
+        )
+        distance_match = re.search(
+            r"DISTANCIA\s+([\d,.]+)\s+METROS", header_text, re.IGNORECASE
+        )
+        surface_match = re.search(r"\b(ARENA|CESPED)\b", header_text, re.IGNORECASE)
+        if not meeting_match or scheduled is None or not distance_match or not surface_match:
+            return None
+        distance = int(re.sub(r"\D", "", distance_match[1]))
+        meeting_code = meeting_match[1]
+        context_words = [word for word in words if self._top(word) <= first_header + 8]
+        bbox = BoundingBox(
+            x0=min(self._x0(word) for word in context_words),
+            top=min(self._top(word) for word in context_words),
+            x1=max(self._x1(word) for word in context_words),
+            bottom=max(self._bottom(word) for word in context_words),
+        )
+        raw_value = " ".join(
+            self._text(word)
+            for word in sorted(context_words, key=lambda word: (self._top(word), self._x0(word)))
+        )
+        normalized = json.dumps(
+            {
+                "meeting_code": meeting_code,
+                "race_number": 1,
+                "scheduled_date": scheduled.isoformat(),
+                "distance_meters": distance,
+                "surface": surface_match[1].lower(),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        evidence = TextEvidence(
+            page_number=page_number,
+            text=raw_value,
+            bbox=bbox,
+            confidence=0.95,
+            requires_review=False,
+        )
+        return StructuredFact(
+            fact_type="race_context",
+            subject_key=f"meeting:{meeting_code}:race:1",
+            normalized_value=normalized,
+            raw_value=raw_value,
+            confidence=0.95,
+            requires_review=False,
+            evidence=evidence,
+        )
+
+    @classmethod
+    def _header_date(cls, words: Sequence[Word], first_header: float) -> date | None:
+        """Recover the printed date despite small baseline offsets between words."""
+
+        candidates = [word for word in words if cls._top(word) < first_header]
+        month_word = next(
+            (
+                word
+                for word in candidates
+                if cls._text(word).upper() in cls._MONTHS
+            ),
+            None,
+        )
+        if month_word is None:
+            return None
+        month_top = cls._top(month_word)
+        same_line = [
+            word for word in candidates if abs(cls._top(word) - month_top) <= 3.0
+        ]
+        day_word = next(
+            (
+                word
+                for word in same_line
+                if cls._x0(word) < cls._x0(month_word)
+                and cls._text(word).isdigit()
+                and 1 <= int(cls._text(word)) <= 31
+            ),
+            None,
+        )
+        year_word = next(
+            (
+                word
+                for word in same_line
+                if cls._x0(word) > cls._x0(month_word)
+                and cls._text(word).isdigit()
+                and 2000 <= int(cls._text(word)) <= 2100
+            ),
+            None,
+        )
+        if day_word is None or year_word is None:
+            return None
+        return date(
+            int(cls._text(year_word)),
+            cls._MONTHS[cls._text(month_word).upper()],
+            int(cls._text(day_word)),
         )
 
     @classmethod

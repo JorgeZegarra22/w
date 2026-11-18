@@ -1,5 +1,7 @@
 # Entity Resolution Implementation Plan
 
+**Implementation status:** COMPLETED — 2026-11-18 (`57 passed`, Ruff and Mypy clean)
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Reprocess the approved race program with extractor version 3, resolve its structured facts into six portable master/race tables, and expose an idempotent `benter resolve --sha` command.

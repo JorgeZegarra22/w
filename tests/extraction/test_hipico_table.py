@@ -13,7 +13,10 @@ def _program_pdf() -> BytesIO:
     stream = BytesIO()
     canvas = Canvas(stream, pagesize=A4)
     canvas.setFont("Helvetica", 8)
+    canvas.drawString(450, 825, "REUNION 202647")
+    canvas.drawString(35, 810, "PROGRAMA PARA LAS CARRERAS DEL SABADO 21 DE NOVIEMBRE 2026")
     canvas.drawString(35, 790, "1ra. CAR.- HANDICAP PARA TODO CABALLO")
+    canvas.drawString(250, 790, "DISTANCIA 1,000 METROS ARENA")
     canvas.drawString(35, 765, 'CUADRUPLE "A" GANADOR PLACE')
 
     canvas.drawString(35, 735, "1")
@@ -39,15 +42,18 @@ def _program_pdf() -> BytesIO:
 def test_extracts_structured_first_race_rows_from_whitespace_columns() -> None:
     bundle = ExtractionRouter().extract(_program_pdf())
 
-    assert len(bundle.facts) == 2
-    first = bundle.facts[0]
+    entries = [fact for fact in bundle.facts if fact.fact_type == "race_entry"]
+    assert len(entries) == 2
+    first = entries[0]
     value = json.loads(first.normalized_value)
     assert value == {
         "horse_name": "WAYTT",
         "jockey": "J H SUAREZ",
         "mandil": 1,
+        "stud": "S.B.P.",
         "trainer": "R Melgarejo",
         "weight": "56.00",
+        "horse_requires_review": False,
     }
     assert first.fact_type == "race_entry"
     assert first.subject_key == "race:1:mandil:1"
@@ -60,9 +66,24 @@ def test_extracts_structured_first_race_rows_from_whitespace_columns() -> None:
 def test_preserves_noisy_horse_name_and_requires_review() -> None:
     bundle = ExtractionRouter().extract(_program_pdf())
 
-    noisy = bundle.facts[1]
+    noisy = [fact for fact in bundle.facts if fact.fact_type == "race_entry"][1]
     value = json.loads(noisy.normalized_value)
     assert value["horse_name"] == "tNrzrAMo (usA)"
     assert value["weight"] == "54.00"
     assert noisy.confidence < 0.8
     assert noisy.requires_review is True
+
+
+def test_extracts_first_race_context_from_program_headers() -> None:
+    bundle = ExtractionRouter().extract(_program_pdf())
+
+    context = next(fact for fact in bundle.facts if fact.fact_type == "race_context")
+    assert json.loads(context.normalized_value) == {
+        "distance_meters": 1000,
+        "meeting_code": "202647",
+        "race_number": 1,
+        "scheduled_date": "2026-11-21",
+        "surface": "arena",
+    }
+    assert context.subject_key == "meeting:202647:race:1"
+    assert context.evidence.page_number == 1

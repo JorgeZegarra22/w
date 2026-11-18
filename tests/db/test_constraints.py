@@ -14,9 +14,15 @@ from benter_peru.db.schema import (
     extracted_facts,
     extraction_runs,
     fact_evidence,
+    horses,
+    jockeys,
     processing_tasks,
+    race_entries,
+    races,
     run_reports,
     source_registry,
+    studs,
+    trainers,
 )
 
 SOURCE_ID = "01J00000000000000000000000"
@@ -250,5 +256,145 @@ def test_run_report_counters_cannot_be_negative(seeded_connection: Connection) -
                 fact_count=0,
                 review_count=0,
                 failure_count=0,
+            )
+        )
+
+
+def test_master_normalized_name_is_unique(seeded_connection: Connection) -> None:
+    values = {
+        "canonical_name": "J H SUAREZ",
+        "normalized_name": "j h suarez",
+        "confirmation_status": "confirmed",
+        "created_at": OBSERVED_AT,
+    }
+    seeded_connection.execute(
+        insert(jockeys).values(id="01J00000000000000000000020", **values)
+    )
+
+    with pytest.raises(IntegrityError):
+        seeded_connection.execute(
+            insert(jockeys).values(id="01J00000000000000000000021", **values)
+        )
+
+
+def test_master_confirmation_status_is_checked(seeded_connection: Connection) -> None:
+    with pytest.raises(IntegrityError):
+        seeded_connection.execute(
+            insert(horses).values(
+                id="01J00000000000000000000022",
+                canonical_name="RUIDOSO",
+                normalized_name="ruidoso",
+                confirmation_status="guessed",
+                created_at=OBSERVED_AT,
+            )
+        )
+
+
+def test_race_identity_and_entry_mandil_are_unique(seeded_connection: Connection) -> None:
+    entity_values = {
+        "confirmation_status": "confirmed",
+        "created_at": OBSERVED_AT,
+    }
+    seeded_connection.execute(
+        insert(horses).values(
+            id="01J00000000000000000000023",
+            canonical_name="WAYTT",
+            normalized_name="waytt",
+            **entity_values,
+        )
+    )
+    seeded_connection.execute(
+        insert(jockeys).values(
+            id="01J00000000000000000000024",
+            canonical_name="J H SUAREZ",
+            normalized_name="j h suarez",
+            **entity_values,
+        )
+    )
+    seeded_connection.execute(
+        insert(trainers).values(
+            id="01J00000000000000000000025",
+            canonical_name="R MELGAREJO",
+            normalized_name="r melgarejo",
+            **entity_values,
+        )
+    )
+    seeded_connection.execute(
+        insert(studs).values(
+            id="01J00000000000000000000026",
+            canonical_name="S.B.P.",
+            normalized_name="s b p",
+            **entity_values,
+        )
+    )
+    race_values = {
+        "source_document_version_id": DOCUMENT_VERSION_ID,
+        "meeting_code": "202647",
+        "race_number": 1,
+        "scheduled_date": OBSERVED_AT.date(),
+        "distance_meters": 1000,
+        "surface": "arena",
+        "confirmation_status": "confirmed",
+        "created_at": OBSERVED_AT,
+    }
+    seeded_connection.execute(
+        insert(races).values(id="01J00000000000000000000027", **race_values)
+    )
+    with pytest.raises(IntegrityError):
+        seeded_connection.execute(
+            insert(races).values(id="01J00000000000000000000028", **race_values)
+        )
+
+    seeded_connection.execute(
+        insert(extraction_runs).values(
+            id=EXTRACTION_RUN_ID,
+            document_version_id=DOCUMENT_VERSION_ID,
+            input_fingerprint="e" * 64,
+            extractor_name="pdfplumber-hipico-text",
+            extractor_version="3",
+            method="text",
+            status="completed",
+        )
+    )
+    for fact_id, fingerprint in (
+        ("01J00000000000000000000029", "f" * 64),
+        ("01J00000000000000000000030", "1" * 64),
+    ):
+        seeded_connection.execute(
+            insert(extracted_facts).values(
+                id=fact_id,
+                extraction_run_id=EXTRACTION_RUN_ID,
+                fact_fingerprint=fingerprint,
+                fact_type="race_entry",
+                subject_key=fact_id,
+                normalized_value="{}",
+                raw_value="row",
+                confidence=0.95,
+                requires_review=False,
+            )
+        )
+    entry_values = {
+        "race_id": "01J00000000000000000000027",
+        "horse_id": "01J00000000000000000000023",
+        "jockey_id": "01J00000000000000000000024",
+        "trainer_id": "01J00000000000000000000025",
+        "stud_id": "01J00000000000000000000026",
+        "mandil": 1,
+        "weight": 56,
+        "created_at": OBSERVED_AT,
+    }
+    seeded_connection.execute(
+        insert(race_entries).values(
+            id="01J00000000000000000000031",
+            source_fact_id="01J00000000000000000000029",
+            **entry_values,
+        )
+    )
+    with pytest.raises(IntegrityError):
+        seeded_connection.execute(
+            insert(race_entries).values(
+                id="01J00000000000000000000032",
+                source_fact_id="01J00000000000000000000030",
+                **entry_values,
             )
         )
