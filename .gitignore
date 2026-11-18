@@ -1,0 +1,33 @@
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Local data and protected documents
+.superpowers/
+var/
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.pdf
+
+# Python environments and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Build and editor output
+build/
+dist/
+*.tmp
+*.temp
+.idea/
+.vscode/

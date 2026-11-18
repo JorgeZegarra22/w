@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "benter-peru"
+version = "0.1.0"
+description = "Auditable horse-racing document intelligence pipeline for Peru"
+readme = "docs/architecture/entregable-1-architecture.md"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "SQLAlchemy>=2.0,<3.0",
+    "alembic>=1.14,<2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "mypy>=1.13,<2.0",
+    "pytest>=8.3,<10.0",
+    "pytest-cov>=6.0,<8.0",
+    "ruff>=0.8,<1.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+addopts = "--strict-config --strict-markers"
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["benter_peru"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+packages = ["benter_peru"]
