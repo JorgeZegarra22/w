@@ -1,5 +1,7 @@
 # Predictive Baseline and Market Engine Implementation Plan
 
+**Implementation status:** COMPLETED — 2026-11-18 (`113 passed`, Ruff and Mypy clean)
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Train a reproducible synthetic logistic baseline, normalize participant utilities into exact race probabilities, derive exact Plackett–Luce Top-N probabilities, and evaluate optional market prices without presenting the result as calibrated betting advice.
