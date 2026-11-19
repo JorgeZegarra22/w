@@ -179,3 +179,39 @@ def test_summary_and_race_queries_return_typed_projections(tmp_path: Path) -> No
         assert picks[1].requires_review is True
     finally:
         repository.close()
+
+
+def test_latest_snapshot_is_selected_per_entry(tmp_path: Path) -> None:
+    database_path = tmp_path / "snapshots.sqlite3"
+    _create_dashboard_database(database_path)
+    repository = DashboardRepository.open(database_path)
+    try:
+        assert repository.horse_snapshots_for_race("race-1") == {}
+        with sqlite3.connect(database_path) as connection:
+            connection.executescript(
+                """
+                CREATE TABLE horse_stats_snapshots (
+                    race_entry_id TEXT NOT NULL,
+                    source_url TEXT NOT NULL,
+                    fetched_at DATETIME NOT NULL,
+                    content_hash TEXT NOT NULL,
+                    profile JSON NOT NULL
+                );
+                """
+            )
+            connection.executemany(
+                "INSERT INTO horse_stats_snapshots VALUES (?, ?, ?, ?, ?)",
+                [
+                    ("entry-1", "https://example.test/old", "2026-11-18 12:00:00",
+                     "a" * 64, '{"recent_races": []}'),
+                    ("entry-1", "https://example.test/new", "2026-11-19 12:00:00",
+                     "b" * 64, '{"recent_races": [{"date": "2026-10-24", "position": 2}]}'),
+                ],
+            )
+        snapshots = repository.horse_snapshots_for_race("race-1")
+        assert set(snapshots) == {1}
+        assert snapshots[1].source_url == "https://example.test/new"
+        assert snapshots[1].profile["recent_races"] == [{"date": "2026-10-24", "position": 2}]
+        assert repository.horse_snapshots_for_race("other-race") == {}
+    finally:
+        repository.close()

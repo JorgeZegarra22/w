@@ -15,6 +15,7 @@ EXPECTED_TABLES = {
     "http_cache_entries",
     "history_import_batches",
     "horse_race_results",
+    "horse_stats_snapshots",
     "horses",
     "jockeys",
     "journalist_picks",
@@ -57,6 +58,7 @@ EXPECTED_UNIQUE_CONSTRAINTS = {
     "horses": {("normalized_name",)},
     "history_import_batches": {("file_sha256",)},
     "horse_race_results": {("row_fingerprint",)},
+    "horse_stats_snapshots": {("race_entry_id", "content_hash")},
     "jockeys": {("normalized_name",)},
     "trainers": {("normalized_name",)},
     "studs": {("normalized_name",)},
@@ -76,6 +78,7 @@ EXPECTED_INDEXES = {
         "ix_horse_results_horse_distance_date",
         "ix_horse_results_horse_surface_date",
     },
+    "horse_stats_snapshots": {"ix_horse_stats_snapshots_entry_fetched"},
     "documents": {
         "ix_documents_first_seen_at",
         "ix_documents_last_seen_at",
