@@ -27,6 +27,7 @@ from benter_peru.ui.service import (
     BettingStrategyService,
     DashboardPrediction,
     PredictionService,
+    journalist_pick_labels,
 )
 
 ARTIFACT_ERROR_MESSAGE = (
@@ -140,11 +141,20 @@ def _show_predictions(
     except (HistoricalFeatureError, ModelError) as error:
         st.error(f"No fue posible calcular el pronóstico: {error}")
         return
+    pick_labels = journalist_pick_labels(
+        horse_rows=tuple(
+            (item.horse_id, item.mandil, item.horse_name) for item in participants
+        ),
+        picks=repository.journalist_picks_for_race(
+            race.meeting_code, race.race_number
+        ),
+    )
     frame = pd.DataFrame.from_records(
         [
             {
                 "Mandil": row.mandil,
                 "Caballo": row.horse_name,
+                "Pick del Periodista": pick_labels[row.participant_id],
                 "Prob. Ganar": row.win_probability,
                 "Prob. Placé (Top 3)": row.top_three_probability,
                 "Dividendo Justo": row.fair_odds,
@@ -219,12 +229,21 @@ def _show_market_strategy(
         st.error(f"No fue posible calcular la estrategia: {error}")
         return
 
+    pick_labels = journalist_pick_labels(
+        horse_rows=tuple(
+            (item.horse_id, item.mandil, item.horse_name) for item in participants
+        ),
+        picks=repository.journalist_picks_for_race(
+            race.meeting_code, race.race_number
+        ),
+    )
     editor_frame = pd.DataFrame.from_records(
         [
             {
                 "participant_id": row.participant_id,
                 "Mandil": row.mandil,
                 "Caballo": row.horse_name,
+                "Pick del Periodista": pick_labels[row.participant_id],
                 "Prob. Ganar": row.win_probability,
                 "Cuota Justa": row.fair_odds,
                 "Cuota Real": None,
@@ -240,6 +259,7 @@ def _show_market_strategy(
             "participant_id",
             "Mandil",
             "Caballo",
+            "Pick del Periodista",
             "Prob. Ganar",
             "Cuota Justa",
         ],

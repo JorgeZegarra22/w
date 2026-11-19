@@ -64,3 +64,8 @@ def test_cli_runs_pipeline_and_reports_persisted_pdf_facts(
     assert report["evidence_count"] == report["fact_count"]
     assert (blob_root / sha256(pdf).hexdigest()).is_file()
     assert "estudie_su_polla" in captured.err
+
+    assert main(["run", "--source", "elinformativohipico"]) == 0
+    repeated_report = json.loads(capsys.readouterr().out)
+    assert repeated_report["documents"][0]["sha256"] == sha256(pdf).hexdigest()
+    assert repeated_report["documents"][0]["processing_status"] == "extracted"

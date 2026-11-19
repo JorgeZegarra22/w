@@ -47,7 +47,9 @@ LOGGER = logging.getLogger(__name__)
 
 
 class ExtractionAdapter(Protocol):
-    def extract(self, source: BytesIO) -> ExtractionBundle: ...
+    def extract(
+        self, source: BytesIO, *, document_type: str = "programa_monterrico"
+    ) -> ExtractionBundle: ...
 
 
 def _utc_now() -> datetime:
@@ -186,6 +188,7 @@ class RunOrchestrator:
                     version_id=version_id,
                     content=content,
                     blob_sha256=digest,
+                    document_type=item.document_type,
                 )
                 deduplicated_count += deduplicated
                 fact_count += created_facts
@@ -274,6 +277,7 @@ class RunOrchestrator:
                 version_id=version_id,
                 content=content,
                 blob_sha256=digest,
+                document_type=document_type,
             )
             status: RunStatus = "completed_with_reviews" if review_count else "completed"
             return self._finish(
@@ -597,9 +601,10 @@ class RunOrchestrator:
         version_id: str,
         content: bytes,
         blob_sha256: str,
+        document_type: str,
     ) -> tuple[int, int, int]:
         input_fingerprint = sha256(
-            f"{blob_sha256}:{EXTRACTOR_NAME}:{EXTRACTOR_VERSION}".encode()
+            f"{blob_sha256}:{document_type}:{EXTRACTOR_NAME}:{EXTRACTOR_VERSION}".encode()
         ).hexdigest()
         existing_task = connection.execute(
             select(processing_tasks.c.status).where(
@@ -638,7 +643,9 @@ class RunOrchestrator:
                 status="running",
             )
         )
-        bundle = self._extraction_router.extract(BytesIO(content))
+        bundle = self._extraction_router.extract(
+            BytesIO(content), document_type=document_type
+        )
         fact_count = 0
         review_count = 0
         if bundle.requires_ocr:

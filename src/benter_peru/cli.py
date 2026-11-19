@@ -23,6 +23,7 @@ from benter_peru.db.schema import (
     fact_evidence,
 )
 from benter_peru.discovery import HtmlDocumentDiscoverer, SourceDefinition
+from benter_peru.entities.journalist_picks import JournalistPickResolver
 from benter_peru.entities.resolver import EntityResolver
 from benter_peru.extraction.identity import EXTRACTOR_NAME, EXTRACTOR_VERSION
 from benter_peru.extraction.router import ExtractionRouter
@@ -40,12 +41,19 @@ def build_parser() -> argparse.ArgumentParser:
     run = subcommands.add_parser("run", help="run one configured source")
     run.add_argument("--source", required=True, choices=("elinformativohipico",))
     run.add_argument("--local-file", type=Path)
+    run.add_argument(
+        "--document-type",
+        choices=("programa_monterrico", "estudie_su_polla"),
+        default="programa_monterrico",
+    )
     resolve = subcommands.add_parser("resolve", help="resolve extracted facts into entities")
     resolve.add_argument("--sha", required=True)
     history = subcommands.add_parser("history", help="manage historical race results")
     history_commands = history.add_subparsers(dest="history_command", required=True)
     history_import = history_commands.add_parser("import", help="import a strict CSV file")
     history_import.add_argument("--file", type=Path, required=True)
+    picks = subcommands.add_parser("picks", help="materialize journalist picks")
+    picks.add_argument("--sha", required=True)
     return parser
 
 
@@ -70,12 +78,13 @@ def _build_report(engine: Engine, result: RunResult) -> dict[str, Any]:
         ),
         None,
     )
-    document_filter = (
-        document_versions.c.blob_sha256 == local_sha
-        if local_sha is not None
-        else document_versions.c.crawl_run_id == result.crawl_run_id
-    )
-    fact_filter = document_filter
+    if local_sha is not None:
+        document_filter = document_versions.c.blob_sha256 == local_sha
+        fact_filter = document_filter
+    else:
+        discovered_urls = tuple(item.url for item in result.discovered_documents)
+        document_filter = documents.c.canonical_url.in_(discovered_urls)
+        fact_filter = document_versions.c.crawl_run_id == result.crawl_run_id
     if local_sha is not None:
         fact_filter = (
             document_filter
@@ -141,7 +150,12 @@ def _build_report(engine: Engine, result: RunResult) -> dict[str, Any]:
     }
 
 
-def _run(config: RuntimeConfig, *, local_file: Path | None = None) -> dict[str, Any]:
+def _run(
+    config: RuntimeConfig,
+    *,
+    local_file: Path | None = None,
+    document_type: str = "programa_monterrico",
+) -> dict[str, Any]:
     config.database_path.parent.mkdir(parents=True, exist_ok=True)
     source = _source_definition(config)
     engine = create_database_engine(config.database_url)
@@ -159,7 +173,9 @@ def _run(config: RuntimeConfig, *, local_file: Path | None = None) -> dict[str, 
                 )
             )
             policy_gate = PolicyGate(client)
-            discoverer = HtmlDocumentDiscoverer(expected_types=("estudie_su_polla",))
+            discoverer = HtmlDocumentDiscoverer(
+                expected_types=("programa_monterrico", "estudie_su_polla")
+            )
         orchestrator = RunOrchestrator(
             engine=engine,
             sources={source.code: source},
@@ -177,6 +193,7 @@ def _run(config: RuntimeConfig, *, local_file: Path | None = None) -> dict[str, 
                 source_code=source.code,
                 correlation_id=new_ulid(),
                 file_path=local_file,
+                document_type=document_type,
             )
         return _build_report(engine, result)
     finally:
@@ -203,11 +220,24 @@ def _import_history(config: RuntimeConfig, path: Path) -> dict[str, Any]:
         engine.dispose()
 
 
+def _resolve_picks(config: RuntimeConfig, sha256: str) -> dict[str, Any]:
+    engine = create_database_engine(config.database_url)
+    try:
+        upgrade_database(engine)
+        return asdict(JournalistPickResolver(engine).resolve_sha(sha256))
+    finally:
+        engine.dispose()
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     arguments = build_parser().parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
     if arguments.command == "run":
-        report = _run(RuntimeConfig.from_env(), local_file=arguments.local_file)
+        report = _run(
+            RuntimeConfig.from_env(),
+            local_file=arguments.local_file,
+            document_type=arguments.document_type,
+        )
         print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
         return 0
     if arguments.command == "resolve":
@@ -216,6 +246,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if arguments.command == "history" and arguments.history_command == "import":
         report = _import_history(RuntimeConfig.from_env(), arguments.file)
+        print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+    if arguments.command == "picks":
+        report = _resolve_picks(RuntimeConfig.from_env(), arguments.sha)
         print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
         return 0
     raise AssertionError("unreachable command")

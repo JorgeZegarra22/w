@@ -4,8 +4,8 @@ from datetime import date
 from pathlib import Path
 
 from benter_peru.ml.models import RealModelMetadata, RealRacePrediction
-from benter_peru.ui.queries import DashboardRepository, RaceOption
-from benter_peru.ui.service import PredictionService
+from benter_peru.ui.queries import DashboardRepository, JournalistPick, RaceOption
+from benter_peru.ui.service import PredictionService, journalist_pick_labels
 
 from .test_queries import _create_dashboard_database
 
@@ -73,3 +73,18 @@ def test_prediction_service_uses_selected_race_context_and_real_provenance(
         )
     finally:
         repository.close()
+
+
+def test_journalist_pick_labels_distinguish_confirmed_review_and_absent() -> None:
+    labels = journalist_pick_labels(
+        horse_rows=(("horse-1", 1, "WAYTT"), ("horse-2", 2, "REFUGIADO")),
+        picks=(
+            JournalistPick(1, 1, "WAYTT", "REVISTA", 0.97, False),
+            JournalistPick(2, None, "REFUGIADO?", "REVISTA", 0.55, True),
+        ),
+    )
+
+    assert labels == {"horse-1": "★ 1", "horse-2": "⚠ REFUGIADO?"}
+    assert journalist_pick_labels(
+        horse_rows=(("horse-1", 1, "WAYTT"),), picks=()
+    ) == {"horse-1": "-"}

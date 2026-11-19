@@ -58,6 +58,17 @@ def _create_dashboard_database(path: Path) -> None:
                 distance_meters INTEGER NOT NULL,
                 surface TEXT NOT NULL
             );
+            CREATE TABLE journalist_picks (
+                id TEXT PRIMARY KEY,
+                meeting_code TEXT NOT NULL,
+                race_number INTEGER NOT NULL,
+                selection_rank INTEGER NOT NULL,
+                mandil INTEGER,
+                horse_name_raw TEXT NOT NULL,
+                journalist_name TEXT NOT NULL,
+                confidence NUMERIC NOT NULL,
+                requires_review BOOLEAN NOT NULL
+            );
 
             INSERT INTO horses VALUES ('horse-1', 'WAYTT');
             INSERT INTO horses VALUES ('horse-2', 'REFUGIADO');
@@ -83,6 +94,14 @@ def _create_dashboard_database(path: Path) -> None:
             );
             INSERT INTO horse_race_results VALUES (
                 'result-2', 'horse-2', '2026-10-24', 3, 1000, 'arena'
+            );
+            INSERT INTO journalist_picks VALUES (
+                'pick-1', '202647', 1, 1, 1, 'WAYTT',
+                'ESTUDIE SU POLLA', 0.97, 0
+            );
+            INSERT INTO journalist_picks VALUES (
+                'pick-2', '202647', 1, 2, NULL, 'REFUGIADO?',
+                'ESTUDIE SU POLLA', 0.55, 1
             );
             """
         )
@@ -144,6 +163,7 @@ def test_summary_and_race_queries_return_typed_projections(tmp_path: Path) -> No
         assert races[0].scheduled_date == date(2026, 11, 21)
         assert races[0].distance_meters == 1000
         assert races[0].surface == "arena"
+        assert repository.races_on_date(date(2026, 11, 21)) == races
 
         participants = repository.participants_for_race("race-1")
         assert [participant.mandil for participant in participants] == [1, 2]
@@ -152,5 +172,10 @@ def test_summary_and_race_queries_return_typed_projections(tmp_path: Path) -> No
         assert participants[0].trainer_name == "R MELGAREJO"
         assert participants[0].stud_name == "S.B.P."
         assert participants[1].weight == 54.5
+        picks = repository.journalist_picks_for_race("202647", 1)
+        assert picks[0].mandil == 1
+        assert picks[0].requires_review is False
+        assert picks[1].horse_name_raw == "REFUGIADO?"
+        assert picks[1].requires_review is True
     finally:
         repository.close()
