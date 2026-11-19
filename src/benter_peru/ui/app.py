@@ -9,6 +9,7 @@ import pandas as pd  # type: ignore[import-untyped]
 import streamlit as st
 
 from benter_peru.ml.artifacts import RealModelArtifactConfig
+from benter_peru.ml.betting import BettingError
 from benter_peru.ml.models import (
     ModelError,
     RealLightGBMRaceModel,
@@ -21,7 +22,12 @@ from benter_peru.ui.queries import (
     DashboardRepository,
     RaceOption,
 )
-from benter_peru.ui.service import PredictionService
+from benter_peru.ui.service import (
+    BettingStrategy,
+    BettingStrategyService,
+    DashboardPrediction,
+    PredictionService,
+)
 
 ARTIFACT_ERROR_MESSAGE = (
     "Error: Artefactos del modelo no encontrados o corruptos. "
@@ -159,6 +165,170 @@ def _show_predictions(
     st.info(result.provenance)
 
 
+def _parse_offered_odds(frame: pd.DataFrame) -> dict[str, float]:
+    """Read only explicit, valid decimal quotes from an editor result."""
+    offered: dict[str, float] = {}
+    for row in frame.to_dict(orient="records"):
+        raw_value = row.get("Cuota Real")
+        if raw_value is None or pd.isna(raw_value):
+            continue
+        try:
+            value = float(raw_value)
+        except (TypeError, ValueError) as error:
+            raise BettingError("Cuota Real debe ser un número decimal mayor que 1") from error
+        if not pd.notna(value) or value <= 1 or value == float("inf"):
+            raise BettingError("Cuota Real debe ser finita y mayor que 1")
+        offered[str(row["participant_id"])] = value
+    return offered
+
+
+def _combination_frame(strategy: BettingStrategy, *, trifecta: bool) -> pd.DataFrame:
+    combinations = strategy.trifectas if trifecta else strategy.exactas
+    return pd.DataFrame.from_records(
+        [
+            {
+                "Orden": " → ".join(item.horse_names),
+                "Probabilidad Conjunta": item.joint_probability,
+                "Dividendo Justo Teórico": item.fair_odds,
+            }
+            for item in combinations
+        ]
+    )
+
+
+def _show_market_strategy(
+    repository: DashboardRepository, prediction_service: PredictionService
+) -> None:
+    st.header("Estrategia de Apuestas")
+    st.caption(
+        "Las cuotas se usan solo en memoria. Sin cuota real no se calcula EV ni Kelly."
+    )
+    race = _select_race(repository)
+    if race is None:
+        return
+    participants = repository.participants_for_race(race.id)
+    if len(participants) < 2:
+        st.info("Se necesitan al menos dos participantes para analizar la carrera.")
+        return
+    try:
+        with st.spinner("Calculando probabilidades reales…"):
+            prediction: DashboardPrediction = prediction_service.for_race(
+                race, participants
+            )
+    except (HistoricalFeatureError, ModelError) as error:
+        st.error(f"No fue posible calcular la estrategia: {error}")
+        return
+
+    editor_frame = pd.DataFrame.from_records(
+        [
+            {
+                "participant_id": row.participant_id,
+                "Mandil": row.mandil,
+                "Caballo": row.horse_name,
+                "Prob. Ganar": row.win_probability,
+                "Cuota Justa": row.fair_odds,
+                "Cuota Real": None,
+            }
+            for row in prediction.rows
+        ]
+    )
+    edited = st.data_editor(
+        editor_frame,
+        hide_index=True,
+        width="stretch",
+        disabled=[
+            "participant_id",
+            "Mandil",
+            "Caballo",
+            "Prob. Ganar",
+            "Cuota Justa",
+        ],
+        column_config={
+            "participant_id": None,
+            "Prob. Ganar": st.column_config.NumberColumn(format="percent"),
+            "Cuota Justa": st.column_config.NumberColumn(format="%.2f"),
+            "Cuota Real": st.column_config.NumberColumn(
+                min_value=1.01, format="%.2f", help="Dividendo decimal ofrecido"
+            ),
+        },
+        key=f"market-quotes-{race.id}",
+    )
+    strategy_service = BettingStrategyService()
+    theoretical = strategy_service.analyze(prediction, {})
+    st.subheader("Top 3 Exactas")
+    st.caption("Probabilidades y dividendos justos teóricos; no son recomendaciones.")
+    st.dataframe(
+        _combination_frame(theoretical, trifecta=False),
+        hide_index=True,
+        width="stretch",
+        column_config={
+            "Probabilidad Conjunta": st.column_config.NumberColumn(format="percent"),
+            "Dividendo Justo Teórico": st.column_config.NumberColumn(format="%.2f"),
+        },
+    )
+    if theoretical.trifectas:
+        st.subheader("Top 3 Trifectas")
+        st.caption(
+            "Probabilidades y dividendos justos teóricos; no son recomendaciones."
+        )
+        st.dataframe(
+            _combination_frame(theoretical, trifecta=True),
+            hide_index=True,
+            width="stretch",
+            column_config={
+                "Probabilidad Conjunta": st.column_config.NumberColumn(
+                    format="percent"
+                ),
+                "Dividendo Justo Teórico": st.column_config.NumberColumn(format="%.2f"),
+            },
+        )
+    if not st.button("Analizar Valor", type="primary"):
+        return
+    try:
+        offered = _parse_offered_odds(edited)
+        strategy = strategy_service.analyze(prediction, offered)
+    except BettingError as error:
+        st.error(str(error))
+        return
+    if not strategy.has_market_quotes:
+        st.info("Sin recomendación: ingrese al menos una cuota real de mercado.")
+        return
+    assessment_frame = pd.DataFrame.from_records(
+        [
+            {
+                "Caballo": row.horse_name,
+                "Cuota Justa": row.fair_odds,
+                "Cuota Real": row.offered_odds,
+                "EV": row.expected_value,
+                "% Bankroll Sugerido": row.kelly_stake,
+                "Tiene Valor": row.has_value,
+            }
+            for row in strategy.win_assessments
+        ]
+    )
+    st.subheader("Análisis Ganador")
+    st.dataframe(
+        assessment_frame,
+        hide_index=True,
+        width="stretch",
+        column_config={
+            "Cuota Justa": st.column_config.NumberColumn(format="%.2f"),
+            "Cuota Real": st.column_config.NumberColumn(format="%.2f"),
+            "EV": st.column_config.NumberColumn(format="percent"),
+            "% Bankroll Sugerido": st.column_config.NumberColumn(format="percent"),
+        },
+    )
+    valuable = [row for row in strategy.win_assessments if row.has_value]
+    if valuable:
+        best = max(valuable, key=lambda row: row.kelly_stake)
+        st.success(
+            f"Apuesta base: {best.horse_name}. "
+            f"Stake sugerido: {best.kelly_stake:.2%} del bankroll."
+        )
+    else:
+        st.info("No apostar: ninguna cuota ingresada ofrece valor esperado positivo.")
+
+
 def main() -> None:
     st.set_page_config(page_title="Benter Perú", page_icon="🐎", layout="wide")
     st.title("Benter Perú")
@@ -182,14 +352,19 @@ def main() -> None:
         st.stop()
         return
 
-    view = st.sidebar.radio("Navegación", ("Resumen", "Carreras", "Predicciones"))
+    view = st.sidebar.radio(
+        "Navegación",
+        ("Resumen", "Carreras", "Predicciones", "Estrategia de Apuestas"),
+    )
     st.sidebar.caption("SQLite · modo de solo lectura")
     if view == "Resumen":
         _show_summary(repository)
     elif view == "Carreras":
         _show_races(repository)
-    else:
+    elif view == "Predicciones":
         _show_predictions(repository, prediction_service)
+    else:
+        _show_market_strategy(repository, prediction_service)
 
 
 if __name__ == "__main__":

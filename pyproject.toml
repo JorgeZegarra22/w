@@ -60,3 +60,4 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 python_version = "3.12"
 strict = true
 packages = ["benter_peru"]
+mypy_path = "src"
