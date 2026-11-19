@@ -12,7 +12,7 @@ type Word = Mapping[str, object]
 
 
 class HipicoTableExtractor:
-    """Extract structured runners from the first race using mandil row anchors."""
+    """Extract structured runners from every complete race band on a page."""
 
     _WEIGHT = re.compile(r"^\d{2}\.\d{2}$")
     _MONTHS: ClassVar[dict[str, int]] = {
@@ -36,65 +36,72 @@ class HipicoTableExtractor:
         *,
         page_number: int,
         page_width: float,
+        document_header_words: Sequence[Word] | None = None,
     ) -> tuple[StructuredFact, ...]:
-        first_header = self._header_top(words, "1ra")
-        second_header = self._header_top(words, "2da")
-        if first_header is None or second_header is None or second_header <= first_header:
-            return ()
-
-        anchors = sorted(
-            (
-                word
-                for word in words
-                if self._text(word).isdigit()
-                and self._x0(word) < page_width * 0.09
-                and first_header + 8 < self._top(word) < second_header
-            ),
-            key=self._center_y,
-        )
-        if not anchors:
-            return ()
-
         facts: list[StructuredFact] = []
-        context = self._context_fact(
-            words,
-            page_number=page_number,
-            first_header=first_header,
-        )
-        if context is not None:
-            facts.append(context)
-        centers = [self._center_y(anchor) for anchor in anchors]
-        for index, anchor in enumerate(anchors):
-            lower = (
-                (centers[index - 1] + centers[index]) / 2
-                if index > 0
-                else centers[index] - self._first_half_gap(centers)
+        headers = self._race_headers(words)
+        for header_index, (race_number, header_top) in enumerate(headers):
+            next_top = (
+                headers[header_index + 1][1]
+                if header_index + 1 < len(headers)
+                else max((self._bottom(word) for word in words), default=header_top)
             )
-            upper = (
-                (centers[index] + centers[index + 1]) / 2
-                if index + 1 < len(centers)
-                else centers[index] + self._last_half_gap(centers)
+            anchors = sorted(
+                (
+                    word
+                    for word in words
+                    if self._text(word).isdigit()
+                    and self._x0(word) < page_width * 0.09
+                    and header_top + 8 < self._top(word) < next_top
+                ),
+                key=self._center_y,
             )
-            row_words = [
-                word
-                for word in words
-                if lower <= self._center_y(word) < upper
-                and self._x0(word) < page_width * 0.80
-            ]
-            fact = self._row_fact(
-                row_words,
-                mandil=int(self._text(anchor)),
+            if not anchors:
+                continue
+            context = self._context_fact(
+                words,
                 page_number=page_number,
-                page_width=page_width,
+                header_top=header_top,
+                race_number=race_number,
+                document_header_words=document_header_words,
             )
-            if fact is not None:
-                facts.append(fact)
+            if context is None:
+                continue
+            facts.append(context)
+            centers = [self._center_y(anchor) for anchor in anchors]
+            for index, anchor in enumerate(anchors):
+                lower = (
+                    (centers[index - 1] + centers[index]) / 2
+                    if index > 0
+                    else centers[index] - self._first_half_gap(centers)
+                )
+                upper = (
+                    (centers[index] + centers[index + 1]) / 2
+                    if index + 1 < len(centers)
+                    else centers[index] + self._last_half_gap(centers)
+                )
+                row_words = [
+                    word
+                    for word in words
+                    if lower <= self._center_y(word) < upper
+                    and self._x0(word) < page_width * 0.80
+                ]
+                fact = self._row_fact(
+                    row_words,
+                    race_number=race_number,
+                    mandil=int(self._text(anchor)),
+                    page_number=page_number,
+                    page_width=page_width,
+                )
+                if fact is not None:
+                    facts.append(fact)
         return tuple(facts)
 
     def _row_fact(
         self,
         words: Sequence[Word],
         *,
+        race_number: int,
         mandil: int,
         page_number: int,
         page_width: float,
@@ -130,6 +137,7 @@ class HipicoTableExtractor:
         )
         normalized = json.dumps(
             {
+                "race_number": race_number,
                 "mandil": mandil,
                 "horse_name": horse,
                 "weight": weight,
@@ -143,7 +151,7 @@ class HipicoTableExtractor:
         )
         return StructuredFact(
             fact_type="race_entry",
-            subject_key=f"race:1:mandil:{mandil}",
+            subject_key=f"race:{race_number}:mandil:{mandil}",
             normalized_value=normalized,
             raw_value=raw_value,
             confidence=confidence,
@@ -156,14 +164,21 @@ class HipicoTableExtractor:
         words: Sequence[Word],
         *,
         page_number: int,
-        first_header: float,
+        header_top: float,
+        race_number: int,
+        document_header_words: Sequence[Word] | None,
     ) -> StructuredFact | None:
-        ordered = sorted(words, key=lambda word: (self._top(word), self._x0(word)))
-        full_text = " ".join(self._text(word) for word in ordered)
+        context_source = document_header_words or words
+        full_text = " ".join(
+            self._text(word)
+            for word in sorted(
+                context_source, key=lambda word: (self._top(word), self._x0(word))
+            )
+        )
         meeting_match = re.search(r"REUN.{0,12}?(\d{6})", full_text, re.IGNORECASE)
-        scheduled = self._header_date(words, first_header)
+        scheduled = self._header_date(context_source, header_top)
         header_words = [
-            word for word in words if first_header - 2 <= self._top(word) <= first_header + 8
+            word for word in words if header_top - 2 <= self._top(word) <= header_top + 8
         ]
         header_text = " ".join(
             self._text(word) for word in sorted(header_words, key=self._x0)
@@ -176,7 +191,7 @@ class HipicoTableExtractor:
             return None
         distance = int(re.sub(r"\D", "", distance_match[1]))
         meeting_code = meeting_match[1]
-        context_words = [word for word in words if self._top(word) <= first_header + 8]
+        context_words = [word for word in words if self._top(word) <= header_top + 8]
         bbox = BoundingBox(
             x0=min(self._x0(word) for word in context_words),
             top=min(self._top(word) for word in context_words),
@@ -190,7 +205,7 @@ class HipicoTableExtractor:
         normalized = json.dumps(
             {
                 "meeting_code": meeting_code,
-                "race_number": 1,
+                "race_number": race_number,
                 "scheduled_date": scheduled.isoformat(),
                 "distance_meters": distance,
                 "surface": surface_match[1].lower(),
@@ -207,7 +222,7 @@ class HipicoTableExtractor:
         )
         return StructuredFact(
             fact_type="race_context",
-            subject_key=f"meeting:{meeting_code}:race:1",
+            subject_key=f"meeting:{meeting_code}:race:{race_number}",
             normalized_value=normalized,
             raw_value=raw_value,
             confidence=0.95,
@@ -263,15 +278,24 @@ class HipicoTableExtractor:
         )
 
     @classmethod
-    def _header_top(cls, words: Sequence[Word], prefix: str) -> float | None:
-        return next(
-            (
-                cls._top(word)
-                for word in sorted(words, key=cls._top)
-                if cls._text(word).casefold().startswith(prefix)
-            ),
-            None,
-        )
+    def _race_headers(cls, words: Sequence[Word]) -> list[tuple[int, float]]:
+        headers: list[tuple[int, float]] = []
+        for word in sorted(words, key=lambda item: (cls._top(item), cls._x0(item))):
+            match = re.fullmatch(
+                r"(\d{1,2})(?:ra|da|ro|ta)\.?", cls._text(word), re.IGNORECASE
+            )
+            if match is None:
+                continue
+            top = cls._top(word)
+            has_race_label = any(
+                abs(cls._top(candidate) - top) <= 3
+                and cls._x0(candidate) > cls._x0(word)
+                and cls._text(candidate).casefold().startswith("car")
+                for candidate in words
+            )
+            if has_race_label:
+                headers.append((int(match.group(1)), top))
+        return headers
 
     @classmethod
     def _join_band(cls, words: Sequence[Word], lower: float, upper: float) -> str:

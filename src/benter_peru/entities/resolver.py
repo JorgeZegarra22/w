@@ -65,18 +65,27 @@ class EntityResolver:
                 )
             ).mappings().all()
             contexts = [row for row in fact_rows if row["fact_type"] == "race_context"]
-            if len(contexts) != 1:
-                raise ResolutionError("latest extraction must contain exactly one race_context")
+            if not contexts:
+                raise ResolutionError("latest extraction must contain race_context facts")
 
-            context = self._json_object(contexts[0]["normalized_value"])
-            race_id, created = self._resolve_race(
-                connection, context, str(extraction["document_version_id"])
-            )
-            counters["races_created" if created else "races_reused"] += 1
+            race_ids: dict[int, str] = {}
+            for row in contexts:
+                context = self._json_object(row["normalized_value"])
+                race_number = int(context["race_number"])
+                if race_number in race_ids:
+                    raise ResolutionError("latest extraction has duplicate race_context facts")
+                race_id, created = self._resolve_race(
+                    connection, context, str(extraction["document_version_id"])
+                )
+                race_ids[race_number] = race_id
+                counters["races_created" if created else "races_reused"] += 1
 
             entries = sorted(
                 (row for row in fact_rows if row["fact_type"] == "race_entry"),
-                key=lambda row: int(self._json_object(row["normalized_value"])["mandil"]),
+                key=lambda row: (
+                    int(self._json_object(row["normalized_value"])["race_number"]),
+                    int(self._json_object(row["normalized_value"])["mandil"]),
+                ),
             )
             for row in entries:
                 if connection.scalar(
@@ -87,6 +96,12 @@ class EntityResolver:
                     counters["entries_reused"] += 1
                     continue
                 payload = self._json_object(row["normalized_value"])
+                race_number = int(payload["race_number"])
+                entry_race_id = race_ids.get(race_number)
+                if entry_race_id is None:
+                    raise ResolutionError(
+                        f"race_entry references missing race_context {race_number}"
+                    )
                 horse_uncertain = bool(row["requires_review"]) or bool(
                     payload.get("horse_requires_review", False)
                 )
@@ -113,7 +128,7 @@ class EntityResolver:
                 connection.execute(
                     insert(race_entries).values(
                         id=new_ulid(),
-                        race_id=race_id,
+                        race_id=entry_race_id,
                         horse_id=horse_id,
                         jockey_id=jockey_id,
                         trainer_id=trainer_id,

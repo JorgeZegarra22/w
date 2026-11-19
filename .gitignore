@@ -13,6 +13,9 @@ blobs/
 *.sqlite*
 *.sqlite3
 *.pdf
+*.pkl
+dataset_oficial_resultados*.csv
+hipicocvs/
 
 # Python environments and caches
 .venv/
