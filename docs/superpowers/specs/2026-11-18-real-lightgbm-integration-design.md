@@ -1,6 +1,6 @@
 # Real LightGBM Model Integration Design
 
-**Status:** Approved for implementation  
+**Status:** Implemented and verified
 **Date:** 2026-11-18  
 **Target branch:** `codex/entregable-8-real-model-integration`
 
@@ -143,6 +143,14 @@ issue wagering recommendations.
 3. Runs LightGBM inference.
 4. Returns win probability, Top-3 probability, and fair decimal odds.
 
+This flow is race-generic. `RaceOption.scheduled_date`,
+`RaceOption.distance_meters`, and `RaceOption.surface` always come from SQLite,
+while mandil, weight, jockey, trainer, stud, and horse identity come from that
+race's `race_entries`. Neither 2,400 metres nor any Derby participant is a
+production-code default. Every registered race in meeting 202647 is selectable;
+the same service handles the first 1,000-metre race, the tenth 2,400-metre Derby,
+and every intervening race.
+
 The Streamlit view lazily constructs and caches the service. A missing or corrupt
 artifact shows:
 
@@ -162,15 +170,44 @@ históricos (2024-2026)
 The table contains Mandil, Caballo, Prob. Ganar, Prob. Placé (Top 3), and
 Dividendo Justo.
 
-## 7. Fire Test
+## 7. Universal PDF-to-Race Continuity
+
+The prediction layer can only be universal if ingestion persists every race.
+`TextPdfExtractor` therefore invokes `HipicoTableExtractor` on every text page,
+not only page 1. The table extractor detects each ordinal race header, defines
+the row band until the next race header (or page end), and emits:
+
+- one `race_context` per detected race with meeting code, race number, scheduled
+  date, distance, and explicit surface;
+- one `race_entry` per mandil whose subject key includes that race number;
+- the race number inside every entry payload so resolution cannot associate an
+  entry with the wrong context.
+
+Extractor identity advances from 3.1 to 4.0 because the output cardinality and
+subject keys change. Historical extraction runs remain immutable.
+
+`EntityResolver` accepts one or more race contexts, resolves each unique
+`(meeting_code, race_number)`, validates context conflicts, groups entries by
+their payload race number, and writes each to the corresponding `race_id`.
+The whole document remains one `UnitOfWork`: a malformed or orphan entry rolls
+back every race and entry from that resolution attempt.
+
+The existing `races` table already stores `scheduled_date`, `distance_meters`,
+and `surface`; no migration is needed. `DashboardRepository.races_for_meeting`
+already returns all races ordered by number, so once ingestion resolves a full
+program the selectors automatically list the complete meeting.
+
+## 8. Fire Test
 
 Because the current ignored dashboard database has no registered races, the
-fire test creates an ignored SQLite database under `var/ml/real-model/` with the
-approved Derby race and seven participants. It uses the real local artifacts,
-launches Streamlit headlessly, and exercises the same service used by the UI.
-No synthetic model, fabricated history row, or committed database is allowed.
+fire test creates an ignored SQLite database under `var/ml/real-model/` with at
+least two races from meeting 202647: a 1,000-metre race and the 2,400-metre
+Derby. It verifies that the model receives each selected distance and its own
+participants, then launches Streamlit headlessly through the same service used
+by the UI. No synthetic model, fabricated history row, or committed database is
+allowed.
 
-## 8. Testing
+## 9. Testing
 
 - Missing model and missing dataset fail closed.
 - Wrong SHA-256 fails before pickle deserialization.
@@ -181,10 +218,14 @@ No synthetic model, fabricated history row, or committed database is allowed.
 - Real probabilities are finite, positive, and sum exactly to 1.0.
 - Fair odds equal the reciprocal of win probability.
 - Dashboard service never instantiates the synthetic baseline.
+- Selecting different races changes the distance and participant frame passed
+  to the real feature engine; there is no hardcoded Derby context.
 - Existing 119 tests remain green.
+- A synthetic multi-page program produces at least two race contexts and routes
+  each entry to the matching persisted race.
 - Ruff and Mypy remain clean.
 
-## 9. Non-Goals
+## 10. Non-Goals
 
 - Retraining or tuning the supplied model during dashboard startup.
 - Claiming the model is calibrated or profitable.

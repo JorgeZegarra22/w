@@ -3,10 +3,18 @@
 from __future__ import annotations
 
 import math
+import pickle
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import date
+from hashlib import sha256
+from hmac import compare_digest
+from pathlib import Path
+from typing import Any, Protocol, cast
 
+import lightgbm
 import numpy as np
+import pandas as pd  # type: ignore[import-untyped]
 from numpy.typing import NDArray
 from sklearn.linear_model import LogisticRegression  # type: ignore[import-untyped]
 from sklearn.pipeline import Pipeline  # type: ignore[import-untyped]
@@ -16,6 +24,13 @@ from benter_peru.ml.features import FeatureVector
 from benter_peru.ml.probabilities import (
     plackett_luce_place_probabilities,
     stable_softmax,
+)
+from benter_peru.ml.real_features import (
+    CATEGORICAL_FEATURE_COLUMNS,
+    LIGHTGBM_FEATURE_COLUMNS,
+    HistoricalFeatureError,
+    HistoricalLightGBMFeatureEngine,
+    RealRaceParticipant,
 )
 
 FEATURE_NAMES = (
@@ -69,6 +84,190 @@ class RacePrediction:
     win_probabilities: dict[str, float]
     place_probabilities: dict[str, float]
     metadata: ModelMetadata
+
+
+class RealModelArtifactError(ModelError):
+    """Raised when a trusted real-model artifact cannot be used safely."""
+
+
+class _ProbabilityEstimator(Protocol):
+    n_features_in_: int
+
+    def predict_proba(self, values: pd.DataFrame) -> object: ...
+
+
+@dataclass(frozen=True, slots=True)
+class RealModelMetadata:
+    model_type: str
+    training_rows: int
+    training_start: date
+    training_end: date
+    artifact_sha256: str
+    production_ready: bool = False
+    calibrated: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class RealRacePrediction:
+    win_probabilities: dict[str, float]
+    place_probabilities: dict[str, float]
+    fair_odds: dict[str, float]
+    metadata: RealModelMetadata
+    distance_meters: int
+    surface: str
+
+
+class RealLightGBMRaceModel:
+    """Hash-pinned LightGBM inference over leakage-safe historical features."""
+
+    def __init__(
+        self,
+        *,
+        estimator: _ProbabilityEstimator,
+        feature_engine: HistoricalLightGBMFeatureEngine,
+        global_win_rate: float,
+        artifact_sha256: str,
+        place_positions: int,
+    ) -> None:
+        self._estimator = estimator
+        self._feature_engine = feature_engine
+        self._global_win_rate = global_win_rate
+        self._artifact_sha256 = artifact_sha256
+        self._place_positions = place_positions
+
+    @classmethod
+    def load(
+        cls,
+        *,
+        model_path: Path,
+        dataset_path: Path,
+        expected_sha256: str,
+        place_positions: int = 3,
+    ) -> RealLightGBMRaceModel:
+        if not model_path.is_file():
+            raise RealModelArtifactError(f"model artifact not found: {model_path}")
+        if not dataset_path.is_file():
+            raise RealModelArtifactError(
+                f"historical dataset not found: {dataset_path}"
+            )
+        if place_positions <= 0:
+            raise RealModelArtifactError("place_positions must be positive")
+        digest = sha256(model_path.read_bytes()).hexdigest()
+        if not compare_digest(digest, expected_sha256.casefold()):
+            raise RealModelArtifactError("model artifact SHA-256 mismatch")
+        if lightgbm.__version__.split(".", 1)[0] != "4":
+            raise RealModelArtifactError("incompatible LightGBM major version")
+        try:
+            with model_path.open("rb") as stream:
+                # The digest is verified before this executable format is loaded.
+                loaded: Any = pickle.load(stream)
+        except Exception as error:
+            raise RealModelArtifactError("model artifact could not be deserialized") from error
+        if not isinstance(loaded, Mapping):
+            raise RealModelArtifactError("model artifact must be a mapping")
+        required = {"model", "feature_cols", "categorical_cols", "global_win_rate"}
+        if not required.issubset(loaded):
+            raise RealModelArtifactError("model artifact is missing required keys")
+        feature_columns = tuple(str(value) for value in loaded["feature_cols"])
+        categorical_columns = tuple(
+            str(value) for value in loaded["categorical_cols"]
+        )
+        if feature_columns != LIGHTGBM_FEATURE_COLUMNS:
+            raise RealModelArtifactError("model feature column contract is incompatible")
+        if categorical_columns != CATEGORICAL_FEATURE_COLUMNS:
+            raise RealModelArtifactError("model categorical column contract is incompatible")
+        estimator_object = loaded["model"]
+        if not hasattr(estimator_object, "predict_proba") or getattr(
+            estimator_object, "n_features_in_", None
+        ) != len(LIGHTGBM_FEATURE_COLUMNS):
+            raise RealModelArtifactError("model estimator contract is incompatible")
+        try:
+            global_win_rate = float(loaded["global_win_rate"])
+        except (TypeError, ValueError) as error:
+            raise RealModelArtifactError("model global win rate is invalid") from error
+        if not math.isfinite(global_win_rate) or not 0 <= global_win_rate <= 1:
+            raise RealModelArtifactError("model global win rate is invalid")
+        try:
+            feature_engine = HistoricalLightGBMFeatureEngine(dataset_path)
+        except HistoricalFeatureError as error:
+            raise RealModelArtifactError(str(error)) from error
+        return cls(
+            estimator=cast(_ProbabilityEstimator, estimator_object),
+            feature_engine=feature_engine,
+            global_win_rate=global_win_rate,
+            artifact_sha256=digest,
+            place_positions=place_positions,
+        )
+
+    @property
+    def metadata(self) -> RealModelMetadata:
+        training_start, training_end = self._feature_engine.date_range
+        return RealModelMetadata(
+            model_type="historical_lightgbm_v1",
+            training_rows=self._feature_engine.row_count,
+            training_start=training_start,
+            training_end=training_end,
+            artifact_sha256=self._artifact_sha256,
+        )
+
+    def predict_race(
+        self,
+        *,
+        race_date: date,
+        distance_meters: int,
+        surface: str,
+        participants: tuple[RealRaceParticipant, ...],
+    ) -> RealRacePrediction:
+        if len(participants) < 2:
+            raise ModelError("at least two participants are required")
+        rows = self._feature_engine.for_race(
+            race_date=race_date,
+            distance_meters=distance_meters,
+            surface=surface,
+            participants=participants,
+            global_win_rate=self._global_win_rate,
+        )
+        participant_ids = tuple(participant.participant_id for participant in participants)
+        frame = pd.DataFrame.from_records(
+            [rows[participant_id] for participant_id in participant_ids],
+            columns=LIGHTGBM_FEATURE_COLUMNS,
+        )
+        for column in CATEGORICAL_FEATURE_COLUMNS:
+            frame[column] = frame[column].astype("category")
+        try:
+            predicted = np.asarray(self._estimator.predict_proba(frame), dtype=np.float64)
+        except Exception as error:
+            raise RealModelArtifactError("real model inference is incompatible") from error
+        if predicted.shape != (len(participants), 2):
+            raise RealModelArtifactError("real model returned an invalid probability shape")
+        strengths = predicted[:, 1]
+        if not np.isfinite(strengths).all() or np.any(strengths <= 0):
+            raise RealModelArtifactError("real model returned invalid winner strengths")
+        total = float(strengths.sum())
+        normalized: dict[str, float] = {
+            participant_id: float(value / total)
+            for participant_id, value in zip(
+                participant_ids[:-1], strengths[:-1], strict=True
+            )
+        }
+        normalized[participant_ids[-1]] = 1.0 - sum(normalized.values())
+        if any(value <= 0 or not math.isfinite(value) for value in normalized.values()):
+            raise RealModelArtifactError("race normalization produced invalid probabilities")
+        places = plackett_luce_place_probabilities(
+            normalized, min(self._place_positions, len(participants))
+        )
+        fair_odds = {
+            participant_id: 1.0 / probability
+            for participant_id, probability in normalized.items()
+        }
+        return RealRacePrediction(
+            win_probabilities=normalized,
+            place_probabilities=places,
+            fair_odds=fair_odds,
+            metadata=self.metadata,
+            distance_meters=distance_meters,
+            surface=surface,
+        )
 
 
 def encode_feature_vector(features: FeatureVector) -> NDArray[np.float64]:

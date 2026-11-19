@@ -1,6 +1,6 @@
 """Stable extractor identity used by idempotency and persistence."""
 
 EXTRACTOR_NAME = "pdfplumber-hipico-text"
-# Version 3.0 exposed non-linear date-word ordering in the real PDF. Keeping it
-# immutable preserves the audit trail; 3.1 adds geometric date recovery.
-EXTRACTOR_VERSION = "3.1"
+# Version 3.1 remains immutable in the audit trail. Version 4.0 emits every
+# complete race on every text page and includes race_number in entry payloads.
+EXTRACTOR_VERSION = "4.0"

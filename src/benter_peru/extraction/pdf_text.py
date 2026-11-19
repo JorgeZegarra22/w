@@ -32,16 +32,17 @@ class TextPdfExtractor:
             if not pages_with_text:
                 return ExtractionBundle(method="text", requires_ocr=True, evidence=())
 
-            for page in pages_with_text:
-                words = page.extract_words()
-                if page.page_number == 1:
-                    structured_facts.extend(
-                        self._table_extractor.extract(
-                            words,
-                            page_number=page.page_number,
-                            page_width=float(page.width),
-                        )
+            page_words = [(page, page.extract_words()) for page in pages_with_text]
+            document_header_words = page_words[0][1]
+            for page, words in page_words:
+                structured_facts.extend(
+                    self._table_extractor.extract(
+                        words,
+                        page_number=page.page_number,
+                        page_width=float(page.width),
+                        document_header_words=document_header_words,
                     )
+                )
                 for word in words:
                     evidence.append(
                         TextEvidence(

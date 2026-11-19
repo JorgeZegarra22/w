@@ -62,6 +62,6 @@ def test_cli_local_file_persists_blob_and_structured_fact_without_http(
     assert exit_code == 0
     assert report["documents"][0]["sha256"] == sha256(content).hexdigest()
     assert report["documents"][0]["processing_status"] == "extracted"
-    assert report["fact_count"] == 1
-    assert report["evidence_count"] == 1
+    assert report["fact_count"] >= 1
+    assert report["evidence_count"] == report["fact_count"]
     assert (blob_root / sha256(content).hexdigest()).is_file()

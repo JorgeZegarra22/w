@@ -1,5 +1,8 @@
 # Real LightGBM Model Integration Implementation Plan
 
+**Status:** COMPLETED — 2026-11-18. All seven tasks were implemented and
+verified; detailed checkboxes below preserve the original TDD execution plan.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Integrate the trusted historical LightGBM artifact into the read-only dashboard with leakage-safe features, exact race normalization, fair odds, and fail-fast artifact validation.
@@ -17,6 +20,9 @@
 - Every historical feature uses rows with `Fecha < race_date`.
 - Missing, altered, incompatible, ambiguous, or incomplete inputs fail closed.
 - No dashboard code may instantiate or fall back to `BaselineRaceModel`.
+- Production inference must not hardcode 2,400 metres, Derby, or any horse name.
+- Every race registered for meeting 202647 must be selectable and predicted from
+  its own SQLite context.
 - CSV, pickle, SQLite, and generated predictions stay ignored and uncommitted.
 
 ---
@@ -53,6 +59,7 @@
 - [ ] Implement strict CSV/schema parsing and the minimum statistics needed for GREEN.
 - [ ] Write a failing test proving rows on/after the target date are excluded and age comes from the latest prior row.
 - [ ] Implement the strict `< race_date` filter and age resolution.
+- [ ] Write a failing two-race test proving 1,000 m and 2,400 m are passed dynamically for different selections.
 - [ ] Write a failing test for missing horse history and ambiguous normalized identities.
 - [ ] Implement fail-closed identity and history validation.
 - [ ] Run focused Pytest, Ruff, and Mypy checks.
@@ -75,7 +82,26 @@
 - [ ] Implement prediction normalization and metadata while preserving the existing baseline API.
 - [ ] Run focused Pytest, Ruff, and Mypy checks.
 
-### Task 4: Real-only dashboard composition
+### Task 4: Universal multi-race PDF ingestion
+
+**Files:**
+- Modify: `src/benter_peru/extraction/hipico_table.py`
+- Modify: `src/benter_peru/extraction/pdf_text.py`
+- Modify: `src/benter_peru/extraction/identity.py`
+- Modify: `src/benter_peru/entities/resolver.py`
+- Modify: `tests/extraction/test_hipico_table.py`
+- Modify: `tests/entities/test_resolver.py`
+
+**Interfaces:**
+- Produces: one `race_context` per race and race-numbered entries resolved into their matching SQLite race.
+
+- [ ] Write a failing synthetic multi-race PDF test with different distances and surfaces.
+- [ ] Generalize table extraction across race bands and all text pages; increment extractor version to 4.0.
+- [ ] Write a failing resolver integration test proving entries are linked to two distinct races.
+- [ ] Generalize transactional resolution to multiple contexts and reject orphan race numbers.
+- [ ] Run focused extraction/resolver tests, Ruff, and Mypy.
+
+### Task 5: Real-only dashboard composition
 
 **Files:**
 - Modify: `src/benter_peru/ui/service.py`
@@ -93,7 +119,7 @@
 - [ ] Implement cached real service creation, friendly error handling, fair odds, and provenance display.
 - [ ] Run focused dashboard tests, Ruff, and Mypy.
 
-### Task 5: Integrate and refactor Sandbox scripts
+### Task 6: Integrate and refactor Sandbox scripts
 
 **Files:**
 - Create: `src/benter_peru/ml/entrenar_modelo.py`
@@ -110,7 +136,7 @@
 - [ ] Run focused tests and static checks.
 - [ ] Remove the empty Sandbox folder after every source and artifact has a verified destination.
 
-### Task 6: Real artifact fire test and complete verification
+### Task 7: Real artifact fire test and complete verification
 
 **Files:**
 - Create only ignored runtime files below: `var/ml/real-model/`
@@ -120,8 +146,8 @@
 - Exercises the same service and artifacts used by Streamlit.
 
 - [ ] Verify the relocated model and dataset hashes and row/date range.
-- [ ] Build an ignored Derby SQLite fixture with seven approved participants.
-- [ ] Execute the real prediction service and capture seven win probabilities and fair odds.
+- [ ] Build an ignored meeting-202647 SQLite fixture with a 1,000 m race and the 2,400 m Derby.
+- [ ] Execute the real prediction service for both races and capture per-race probabilities and fair odds.
 - [ ] Launch `streamlit run src/benter_peru/ui/app.py` headlessly and confirm startup without exceptions.
 - [ ] Run `python -m pytest -q`, `python -m ruff check .`, and `python -m mypy src`.
 - [ ] Verify no CSV, pickle, SQLite, or generated prediction is tracked.

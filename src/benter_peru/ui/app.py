@@ -8,8 +8,13 @@ from pathlib import Path
 import pandas as pd  # type: ignore[import-untyped]
 import streamlit as st
 
-from benter_peru.ml.features import FeatureError
-from benter_peru.ml.models import ModelError
+from benter_peru.ml.artifacts import RealModelArtifactConfig
+from benter_peru.ml.models import (
+    ModelError,
+    RealLightGBMRaceModel,
+    RealModelArtifactError,
+)
+from benter_peru.ml.real_features import HistoricalFeatureError
 from benter_peru.ui.queries import (
     DATABASE_ERROR_MESSAGE,
     DashboardDatabaseError,
@@ -18,10 +23,37 @@ from benter_peru.ui.queries import (
 )
 from benter_peru.ui.service import PredictionService
 
+ARTIFACT_ERROR_MESSAGE = (
+    "Error: Artefactos del modelo no encontrados o corruptos. "
+    "Por favor, ejecute el pipeline de entrenamiento."
+)
+
 
 @st.cache_resource
 def _repository(database_path: str) -> DashboardRepository:
     return DashboardRepository.open(Path(database_path))
+
+
+def _load_prediction_service(config: RealModelArtifactConfig) -> PredictionService:
+    model = RealLightGBMRaceModel.load(
+        model_path=config.model_path,
+        dataset_path=config.dataset_path,
+        expected_sha256=config.expected_sha256,
+    )
+    return PredictionService(model)
+
+
+@st.cache_resource
+def _prediction_service(
+    model_path: str, dataset_path: str, expected_sha256: str
+) -> PredictionService:
+    return _load_prediction_service(
+        RealModelArtifactConfig(
+            model_path=Path(model_path),
+            dataset_path=Path(dataset_path),
+            expected_sha256=expected_sha256,
+        )
+    )
 
 
 def _select_race(repository: DashboardRepository) -> RaceOption | None:
@@ -83,7 +115,9 @@ def _show_races(repository: DashboardRepository) -> None:
     st.dataframe(frame, hide_index=True, width="stretch")
 
 
-def _show_predictions(repository: DashboardRepository) -> None:
+def _show_predictions(
+    repository: DashboardRepository, prediction_service: PredictionService
+) -> None:
     st.header("Predicciones")
     race = _select_race(repository)
     if race is None:
@@ -92,16 +126,12 @@ def _show_predictions(repository: DashboardRepository) -> None:
     if len(participants) < 2:
         st.info("Se necesitan al menos dos participantes para calcular un pronóstico.")
         return
-    st.warning(
-        "El pronóstico usa un baseline sintético no calibrado y no constituye una "
-        "recomendación de apuesta."
-    )
     if not st.button("Calcular Pronóstico", type="primary"):
         return
     try:
         with st.spinner("Calculando características y probabilidades…"):
-            result = PredictionService(repository.engine).for_race(race, participants)
-    except (FeatureError, ModelError) as error:
+            result = prediction_service.for_race(race, participants)
+    except (HistoricalFeatureError, ModelError) as error:
         st.error(f"No fue posible calcular el pronóstico: {error}")
         return
     frame = pd.DataFrame.from_records(
@@ -111,6 +141,7 @@ def _show_predictions(repository: DashboardRepository) -> None:
                 "Caballo": row.horse_name,
                 "Prob. Ganar": row.win_probability,
                 "Prob. Placé (Top 3)": row.top_three_probability,
+                "Dividendo Justo": row.fair_odds,
             }
             for row in result.rows
         ]
@@ -122,9 +153,10 @@ def _show_predictions(repository: DashboardRepository) -> None:
         column_config={
             "Prob. Ganar": st.column_config.NumberColumn(format="percent"),
             "Prob. Placé (Top 3)": st.column_config.NumberColumn(format="percent"),
+            "Dividendo Justo": st.column_config.NumberColumn(format="%.2f"),
         },
     )
-    st.warning(result.warning)
+    st.info(result.provenance)
 
 
 def main() -> None:
@@ -138,6 +170,17 @@ def main() -> None:
         st.error(DATABASE_ERROR_MESSAGE)
         st.stop()
         return
+    artifact_config = RealModelArtifactConfig.from_env()
+    try:
+        prediction_service = _prediction_service(
+            str(artifact_config.model_path),
+            str(artifact_config.dataset_path),
+            artifact_config.expected_sha256,
+        )
+    except RealModelArtifactError:
+        st.error(ARTIFACT_ERROR_MESSAGE)
+        st.stop()
+        return
 
     view = st.sidebar.radio("Navegación", ("Resumen", "Carreras", "Predicciones"))
     st.sidebar.caption("SQLite · modo de solo lectura")
@@ -146,7 +189,7 @@ def main() -> None:
     elif view == "Carreras":
         _show_races(repository)
     else:
-        _show_predictions(repository)
+        _show_predictions(repository, prediction_service)
 
 
 if __name__ == "__main__":
