@@ -1,8 +1,10 @@
-# Benter Perú
+# Benter Perú v1.0.0
 
 Benter Perú procesa documentos hípicos de Monterrico, conserva la evidencia de
 los datos extraídos y calcula pronósticos por carrera para consultarlos en un
-dashboard local.
+dashboard local. La implementación de v1.0.0 en `master` está completa e
+incluye el **Analista Senior** y el **Generador de Boletos**. El tag histórico
+`v1.0.0` conserva el punto de publicación original.
 
 ## Entregables
 
@@ -19,6 +21,7 @@ dashboard local.
 | 9 | Estrategia de apuestas | EV y Kelly fraccional con cuotas manuales, más combinaciones teóricas de Exacta y Trifecta. |
 | 10 | Revista y automatización | Extracción y materialización de picks de «Estudie su Polla», visualización y reporte diario local. |
 | 11 | Programa oficial de Monterrico | Recolección del programa con Playwright, almacenamiento de perfiles por inscripción y consulta de retrospectos y aprontes en el dashboard. |
+| 12 | Analista Senior y Generador de Boletos | Pronósticos narrativos basados en LightGBM y perfiles oficiales. Boletos de llegada en orden o en Box y apuestas concatenadas, incluido Pick 6. |
 
 ## Arquitectura
 
@@ -106,3 +109,21 @@ de un caballo para ver **Última forma** y **Aprontes recientes**. Para ver a Wa
 elige **2026-476 → Carrera 1**. Para ver a Shotra, Mr Peggy y los demás inscritos
 del Derby Nacional, elige **2026-477 → Carrera 10**. Los perfiles se guardan con
 la URL oficial, la fecha de captura y el hash del HTML.
+
+## Analista Senior y Generador de Boletos
+
+En **Estrategia de Apuestas**, selecciona una reunión y una carrera. El
+**Pronóstico del Analista Senior** muestra el favorito del modelo, la última
+actuación y el apronte más reciente cuando están disponibles. Las cuotas reales
+ingresadas a ganador se usan para identificar apuestas con EV positivo.
+
+En **Generador de Boletos**, elige el tipo de apuesta. Para una llegada, elige
+los mandiles en orden o activa **En Box**. Para una concatenada, selecciona la
+carrera inicial entre las ventanas elegibles, Top 2 o Top 3 y el límite de
+líneas. El boleto muestra los mandiles, el número de líneas y la cobertura
+estimada. Para ver el EV, indica el costo por línea y los dividendos brutos de
+todas las líneas cubiertas.
+
+El panel muestra **SIMULACIÓN MATEMÁTICA** por defecto. **VENTA CONFIRMADA**
+identifica una referencia de venta que ingresaste tras verificarla en el
+programa o en taquilla.
