@@ -5,7 +5,7 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.engine import Engine
 
-from benter_peru.db.schema import horse_stats_snapshots, race_entries, races
+from benter_peru.db.schema import horse_stats_snapshots, jockeys, race_entries, races
 from benter_peru.scrapers.official_scraper import (
     OfficialProgramError,
     discover_race_urls,
@@ -74,6 +74,25 @@ def test_desktop_card_keeps_finish_time_and_workout_precision(program_html: str)
 def test_empty_spa_rejects_missing_program() -> None:
     with pytest.raises(OfficialProgramError, match="reunión"):
         parse_program("<div id='root'></div>", URL)
+
+
+def test_entry_without_declared_jockey_keeps_its_profile(
+    migrated_engine: Engine,
+    tmp_path: Path,
+    program_html: str,
+) -> None:
+    capture = program_html.replace("<div><span>Jinete</span> A Jinete<span>5-1</span></div>", "")
+    assert parse_program(capture, URL).entries[0].jockey is None
+    store = LocalBlobStore(tmp_path / "blobs")
+    source = [(URL, capture, datetime(2026, 11, 19, tzinfo=UTC))]
+    assert persist_programs(migrated_engine, store, source, date(2026, 11, 21)) == (1, 1)
+    with migrated_engine.connect() as connection:
+        row = connection.execute(
+            select(jockeys.c.canonical_name, jockeys.c.confirmation_status).join(
+                race_entries, race_entries.c.jockey_id == jockeys.c.id
+            )
+        ).one()
+        assert tuple(row) == ("Sin jinete declarado", "unconfirmed")
 
 
 def test_official_snapshot_ingestion_is_idempotent(

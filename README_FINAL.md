@@ -67,11 +67,23 @@ Con el proyecto instalado, prepara Chromium y ejecuta el scraper desde la raíz
 del repositorio. Configura `BENTER_USER_AGENT` con tu identificador y un enlace
 de contacto real. Indica en `--blobs` una ruta fuera del repositorio.
 
+La ingesta oficial de Monterrico cubre **34 carreras y 289 perfiles** del fin
+de semana del 21 al 23 de noviembre de 2026.
+
+| Fecha | Reunión | Carreras | ID de partida |
+| --- | --- | ---: | ---: |
+| Sábado 21/11/2026 | `2026-476` | 12 | `863740` |
+| Domingo 22/11/2026 | `2026-477` | 12 | `863752` |
+| Lunes 23/11/2026 | `2026-481` | 10 | `863729` |
+
 ```powershell
 python -m playwright install chromium
 $env:BENTER_USER_AGENT = 'BenterPeruBot/1.0 (+https://example.org/contacto)' # Sustituye la URL
-python -m scripts.official_program --date 2026-11-21 --seed-race 863740 --expected-races 12 `
-  --captures var --database var/official-2026-11-21.sqlite3 --blobs C:/ruta/privada/blobs
+$db = 'var/official-2026-11-21.sqlite3'
+$blobs = 'C:/ruta/privada/blobs'
+python -m scripts.official_program --date 2026-11-21 --seed-race 863740 --expected-races 12 --captures var --database $db --blobs $blobs
+python -m scripts.official_program --date 2026-11-22 --seed-race 863752 --expected-races 12 --captures var/official-weekend --database $db --blobs $blobs
+python -m scripts.official_program --date 2026-11-23 --seed-race 863729 --expected-races 10 --captures var/official-weekend --database $db --blobs $blobs
 ```
 
 El scraper busca enlaces en la vista de reunión y usa `--seed-race` para
@@ -89,6 +101,8 @@ $env:BENTER_DATABASE_PATH = (Resolve-Path 'var/official-2026-11-21.sqlite3').Pat
 streamlit run src/benter_peru/ui/app.py
 ```
 
-En **Carreras**, selecciona la reunión **2026-476** y la **Carrera 1**. Expande
-**1 · Waytt** para ver **Última forma** y **Aprontes recientes**. Los perfiles
-se guardan con la URL oficial, la fecha de captura y el hash del HTML.
+En **Carreras**, elige una de las tres reuniones y una carrera. Expande la fila
+de un caballo para ver **Última forma** y **Aprontes recientes**. Para ver a Waytt,
+elige **2026-476 → Carrera 1**. Para ver a Shotra, Mr Peggy y los demás inscritos
+del Derby Nacional, elige **2026-477 → Carrera 10**. Los perfiles se guardan con
+la URL oficial, la fecha de captura y el hash del HTML.
