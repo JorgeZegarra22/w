@@ -8,6 +8,7 @@ from pathlib import Path
 import pandas as pd  # type: ignore[import-untyped]
 import streamlit as st
 
+from benter_peru.ml.analyst import AnalystRunner, senior_analysis
 from benter_peru.ml.artifacts import RealModelArtifactConfig
 from benter_peru.ml.betting import BettingError
 from benter_peru.ml.models import (
@@ -29,6 +30,7 @@ from benter_peru.ui.service import (
     PredictionService,
     journalist_pick_labels,
 )
+from benter_peru.ui.ticket_panel import show_ticket_generator
 
 ARTIFACT_ERROR_MESSAGE = (
     "Error: Artefactos del modelo no encontrados o corruptos. "
@@ -251,6 +253,13 @@ def _show_market_strategy(
         st.error(f"No fue posible calcular la estrategia: {error}")
         return
 
+    st.subheader("📝 Pronóstico del Analista Senior")
+    analyst = st.empty()
+    snapshots = repository.horse_snapshots_for_race(race.id)
+    runners = [AnalystRunner(row.mandil, row.horse_name, row.win_probability)
+               for row in prediction.rows]
+    profiles = {mandil: snapshot.profile for mandil, snapshot in snapshots.items()}
+
     pick_labels = journalist_pick_labels(
         horse_rows=tuple(
             (item.horse_id, item.mandil, item.horse_name) for item in participants
@@ -296,6 +305,17 @@ def _show_market_strategy(
         key=f"market-quotes-{race.id}",
     )
     strategy_service = BettingStrategyService()
+    ticket = show_ticket_generator(repository, prediction_service, race, prediction)
+    try:
+        offered = _parse_offered_odds(edited)
+    except BettingError as error:
+        st.error(str(error))
+        offered = {}
+    analyst.text(senior_analysis(
+        race.race_number, runners, profiles,
+        {row.mandil: offered[row.participant_id] for row in prediction.rows
+         if row.participant_id in offered}, ticket,
+    ))
     theoretical = strategy_service.analyze(prediction, {})
     st.subheader("Top 3 Exactas")
     st.caption("Probabilidades y dividendos justos teóricos; no son recomendaciones.")
