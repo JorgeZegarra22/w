@@ -24,6 +24,17 @@ def blank_pdf() -> BytesIO:
     return buffer
 
 
+def magazine_pdf() -> BytesIO:
+    buffer = BytesIO()
+    canvas = Canvas(buffer, pagesize=letter)
+    canvas.drawString(72, 740, "REUNION 202647")
+    canvas.drawString(72, 716, "PRONOSTICO DE LA REVISTA")
+    canvas.drawString(72, 692, "1 | ESTUDIE SU POLLA | 3 MR. PEGGY")
+    canvas.save()
+    buffer.seek(0)
+    return buffer
+
+
 def test_extracts_page_text_and_bounding_box_from_text_layer() -> None:
     router = ExtractionRouter()
 
@@ -49,3 +60,11 @@ def test_marks_blank_pdf_as_requiring_ocr_without_evidence() -> None:
     assert bundle.requires_ocr is True
     assert bundle.method == "text"
     assert bundle.evidence == ()
+
+
+def test_routes_magazine_document_type_to_journalist_pick_extractor() -> None:
+    bundle = ExtractionRouter().extract(
+        magazine_pdf(), document_type="estudie_su_polla"
+    )
+
+    assert [fact.fact_type for fact in bundle.facts] == ["journalist_pick"]

@@ -35,7 +35,10 @@ class LowConfidenceRouter:
         self.calls = 0
         self._delegate = ExtractionRouter()
 
-    def extract(self, source: BytesIO) -> ExtractionBundle:
+    def extract(
+        self, source: BytesIO, *, document_type: str = "programa_monterrico"
+    ) -> ExtractionBundle:
+        del document_type
         self.calls += 1
         bundle = self._delegate.extract(source)
         evidence = tuple(
@@ -46,7 +49,10 @@ class LowConfidenceRouter:
 
 
 class ExplodingRouter:
-    def extract(self, source: BytesIO) -> ExtractionBundle:
+    def extract(
+        self, source: BytesIO, *, document_type: str = "programa_monterrico"
+    ) -> ExtractionBundle:
+        del document_type
         del source
         raise RuntimeError("synthetic extraction failure")
 

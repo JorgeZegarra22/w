@@ -707,3 +707,48 @@ Index(
     horse_race_results.c.surface,
     horse_race_results.c.race_date,
 )
+
+journalist_picks = Table(
+    "journalist_picks",
+    metadata,
+    _ulid("id", primary_key=True),
+    Column(
+        "source_document_version_id",
+        String(26),
+        ForeignKey("document_versions.id", name="fk_journalist_pick_document_version"),
+        nullable=False,
+    ),
+    Column(
+        "source_fact_id",
+        String(26),
+        ForeignKey("extracted_facts.id", name="fk_journalist_pick_source_fact"),
+        nullable=False,
+    ),
+    Column("meeting_code", String(20), nullable=False),
+    Column("race_number", Integer, nullable=False),
+    Column("selection_rank", Integer, nullable=False),
+    Column("mandil", Integer),
+    Column("horse_name_raw", String(255), nullable=False),
+    Column("journalist_name", String(255), nullable=False),
+    Column("confidence", Numeric(5, 4), nullable=False),
+    Column("requires_review", Boolean, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    UniqueConstraint("source_fact_id", name="uq_journalist_picks_source_fact"),
+    UniqueConstraint(
+        "source_document_version_id",
+        "meeting_code",
+        "race_number",
+        "selection_rank",
+        name="uq_journalist_picks_document_race_rank",
+    ),
+    CheckConstraint("length(id) = 26", name="id_length"),
+    CheckConstraint("race_number > 0", name="race_number_positive"),
+    CheckConstraint("selection_rank > 0", name="selection_rank_positive"),
+    CheckConstraint("mandil IS NULL OR mandil > 0", name="mandil_positive"),
+    CheckConstraint("confidence >= 0 AND confidence <= 1", name="confidence_range"),
+)
+Index(
+    "ix_journalist_picks_meeting_race",
+    journalist_picks.c.meeting_code,
+    journalist_picks.c.race_number,
+)

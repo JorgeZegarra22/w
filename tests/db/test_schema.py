@@ -17,6 +17,7 @@ EXPECTED_TABLES = {
     "horse_race_results",
     "horses",
     "jockeys",
+    "journalist_picks",
     "processing_tasks",
     "publication_document_links",
     "publication_versions",
@@ -61,6 +62,10 @@ EXPECTED_UNIQUE_CONSTRAINTS = {
     "studs": {("normalized_name",)},
     "races": {("meeting_code", "race_number")},
     "race_entries": {("source_fact_id",), ("race_id", "mandil")},
+    "journalist_picks": {
+        ("source_fact_id",),
+        ("source_document_version_id", "meeting_code", "race_number", "selection_rank"),
+    },
 }
 
 EXPECTED_INDEXES = {
@@ -81,6 +86,7 @@ EXPECTED_INDEXES = {
         "ix_publications_last_seen_at",
     },
     "review_items": {"ix_review_items_status_created_at"},
+    "journalist_picks": {"ix_journalist_picks_meeting_race"},
 }
 
 

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
 from typing import Protocol
 
+from benter_peru.entities.normalization import normalize_name
 from benter_peru.ml.betting import (
     BettingError,
     OrderedCombination,
@@ -15,7 +17,32 @@ from benter_peru.ml.betting import (
 )
 from benter_peru.ml.models import RealRacePrediction
 from benter_peru.ml.real_features import RealRaceParticipant
-from benter_peru.ui.queries import RaceOption, RaceParticipant
+from benter_peru.ui.queries import JournalistPick, RaceOption, RaceParticipant
+
+
+def journalist_pick_labels(
+    *,
+    horse_rows: Sequence[tuple[str, int, str]],
+    picks: Sequence[JournalistPick],
+) -> dict[str, str]:
+    labels = {horse_id: "-" for horse_id, _, _ in horse_rows}
+    by_mandil = {mandil: horse_id for horse_id, mandil, _ in horse_rows}
+    by_name: dict[str, list[str]] = {}
+    for horse_id, _, horse_name in horse_rows:
+        by_name.setdefault(normalize_name(horse_name), []).append(horse_id)
+    for pick in picks:
+        matched_id = by_mandil.get(pick.mandil) if pick.mandil is not None else None
+        if matched_id is None:
+            matches = by_name.get(normalize_name(pick.horse_name_raw), [])
+            matched_id = matches[0] if len(matches) == 1 else None
+        if matched_id is None:
+            continue
+        labels[matched_id] = (
+            f"⚠ {pick.horse_name_raw}"
+            if pick.requires_review
+            else f"★ {pick.selection_rank}"
+        )
+    return labels
 
 
 class RacePredictor(Protocol):
