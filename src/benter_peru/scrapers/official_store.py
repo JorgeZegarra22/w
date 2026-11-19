@@ -36,7 +36,13 @@ def _id(connection: Connection, table: Table, keys: dict[str, Any], **extra: Any
 
 
 def _fact(
-    connection: Connection, extraction_id: str, kind: str, subject: str, payload: dict[str, Any]
+    connection: Connection,
+    extraction_id: str,
+    kind: str,
+    subject: str,
+    payload: dict[str, Any],
+    *,
+    requires_review: bool = False,
 ) -> str:
     text = json.dumps(payload, ensure_ascii=False, sort_keys=True)
     fingerprint = sha256(f"{extraction_id}:{kind}:{subject}:{text}".encode()).hexdigest()
@@ -50,17 +56,19 @@ def _fact(
         normalized_value=text,
         raw_value=text,
         confidence=1,
-        requires_review=False,
+        requires_review=requires_review,
     )
 
 
-def _entity(connection: Connection, table: Table, name: str, now: datetime) -> str:
+def _entity(
+    connection: Connection, table: Table, name: str, now: datetime, *, confirmed: bool = True
+) -> str:
     return _id(
         connection,
         table,
         {"normalized_name": normalize_name(name)},
         canonical_name=name,
-        confirmation_status="confirmed",
+        confirmation_status="confirmed" if confirmed else "unconfirmed",
         created_at=now,
     )
 
@@ -90,13 +98,20 @@ def _entry_id(
             "trainer": entry.trainer,
             "stud": entry.stud,
         },
+        requires_review=entry.jockey is None,
     )
     return _id(
         connection,
         db.race_entries,
         {"race_id": race_id, "mandil": entry.mandil},
         horse_id=_entity(connection, db.horses, entry.horse_name, now),
-        jockey_id=_entity(connection, db.jockeys, entry.jockey, now),
+        jockey_id=_entity(
+            connection,
+            db.jockeys,
+            entry.jockey or "Sin jinete declarado",
+            now,
+            confirmed=entry.jockey is not None,
+        ),
         trainer_id=_entity(connection, db.trainers, entry.trainer, now),
         stud_id=_entity(connection, db.studs, entry.stud, now),
         source_fact_id=fact_id,

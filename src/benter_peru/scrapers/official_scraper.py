@@ -35,7 +35,7 @@ class OfficialEntry:
     mandil: int
     horse_name: str
     weight: Decimal
-    jockey: str
+    jockey: str | None
     trainer: str
     stud: str
     profile: HorseProfile
@@ -114,11 +114,11 @@ def _entry(card: HtmlElement) -> OfficialEntry:
         for node in card.xpath("./div[1]//span[not(*)]")
         if (value := re.fullmatch(r"(\d{2}(?:[.,]\d+)?)\s*k(?:g)?", _text(node)))
     ]
-    jockey = _labeled_person(card, "Jinete")
+    jockey = _labeled_person(card, "Jinete") or None
     trainer = _labeled_person(card, "Preparador")
     studs = card.xpath("./div[1]//div[text()[contains(., ' Stud ')]]")
     stud = _text(studs[0]).partition(" Stud ")[2] if studs else ""
-    if not (mandils and names and weights and jockey and trainer and stud):
+    if not (mandils and names and weights and trainer and stud):
         raise OfficialProgramError("datos incompletos de un participante")
     profile: HorseProfile = {"general": [], "by_track": [], "recent_races": [], "workouts": []}
     fields = ("scope", "starts", "wins", "second", "third", "fourth", "nt", "earnings")
