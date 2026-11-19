@@ -1,6 +1,7 @@
 """SQLAlchemy Core schema for the approved Entregable 1 data model."""
 
 from sqlalchemy import (
+    JSON,
     BigInteger,
     Boolean,
     CheckConstraint,
@@ -751,4 +752,22 @@ Index(
     "ix_journalist_picks_meeting_race",
     journalist_picks.c.meeting_code,
     journalist_picks.c.race_number,
+)
+
+horse_stats_snapshots = Table(
+    "horse_stats_snapshots",
+    metadata,
+    _ulid("id", primary_key=True),
+    Column("race_entry_id", String(26), ForeignKey("race_entries.id"), nullable=False),
+    Column("source_url", Text, nullable=False),
+    Column("fetched_at", DateTime(timezone=True), nullable=False),
+    _sha256("content_hash"),
+    Column("profile", JSON(none_as_null=True), nullable=False),
+    UniqueConstraint("race_entry_id", "content_hash", name="uq_horse_snapshot_entry_hash"),
+    CheckConstraint("length(content_hash) = 64", name="content_hash_length"),
+)
+Index(
+    "ix_horse_stats_snapshots_entry_fetched",
+    horse_stats_snapshots.c.race_entry_id,
+    horse_stats_snapshots.c.fetched_at,
 )

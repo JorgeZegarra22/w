@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from urllib.parse import quote
 
@@ -13,6 +13,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from benter_peru.db.schema import (
     extracted_facts,
+    horse_stats_snapshots,
     horses,
     jockeys,
     journalist_picks,
@@ -82,6 +83,14 @@ class JournalistPick:
     journalist_name: str
     confidence: float
     requires_review: bool
+
+
+@dataclass(frozen=True, slots=True)
+class HorseSnapshot:
+    source_url: str
+    fetched_at: datetime
+    content_hash: str
+    profile: dict[str, object]
 
 
 class DashboardRepository:
@@ -220,6 +229,37 @@ class DashboardRepository:
                 )
                 for row in connection.execute(statement)
             )
+
+    def horse_snapshots_for_race(self, race_id: str) -> dict[int, HorseSnapshot]:
+        snapshots = horse_stats_snapshots.c
+        ranked = (
+            select(
+                race_entries.c.mandil,
+                snapshots.source_url,
+                snapshots.fetched_at,
+                snapshots.content_hash,
+                snapshots.profile,
+                func.row_number().over(
+                    partition_by=snapshots.race_entry_id,
+                    order_by=(snapshots.fetched_at.desc(), snapshots.content_hash.desc()),
+                ).label("capture_rank"),
+            )
+            .join(race_entries, race_entries.c.id == snapshots.race_entry_id)
+            .where(race_entries.c.race_id == race_id)
+            .subquery()
+        )
+        with self.engine.connect() as connection:
+            if not inspect(connection).has_table(horse_stats_snapshots.name):
+                return {}
+            return {
+                int(row.mandil): HorseSnapshot(
+                    source_url=str(row.source_url),
+                    fetched_at=row.fetched_at,
+                    content_hash=str(row.content_hash),
+                    profile=row.profile,
+                )
+                for row in connection.execute(select(ranked).where(ranked.c.capture_rank == 1))
+            }
 
     def journalist_picks_for_race(
         self, meeting_code: str, race_number: int

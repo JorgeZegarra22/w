@@ -121,6 +121,28 @@ def _show_races(repository: DashboardRepository) -> None:
         return
     st.dataframe(frame, hide_index=True, width="stretch")
 
+    snapshots = repository.horse_snapshots_for_race(race.id)
+    for row in frame.to_dict(orient="records"):
+        mandil = int(row["Mandil"])
+        snapshot = snapshots.get(mandil)
+        with st.expander(f"{mandil} · {row['Caballo']}"):
+            if snapshot is None:
+                st.caption("Perfil oficial no disponible.")
+                continue
+            st.caption(f"Captura oficial · {snapshot.fetched_at:%d/%m/%Y %H:%M} UTC")
+            form = snapshot.profile.get("recent_races")
+            workouts = snapshot.profile.get("workouts")
+            st.subheader("Última forma")
+            if isinstance(form, list) and form:
+                st.dataframe(pd.DataFrame.from_records(form[:5]), hide_index=True)
+            else:
+                st.caption("Sin carreras registradas en la captura.")
+            st.subheader("Aprontes recientes")
+            if isinstance(workouts, list) and workouts:
+                st.dataframe(pd.DataFrame.from_records(workouts), hide_index=True)
+            else:
+                st.caption("Sin aprontes registrados en la captura.")
+
 
 def _show_predictions(
     repository: DashboardRepository, prediction_service: PredictionService
