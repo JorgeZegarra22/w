@@ -11,8 +11,8 @@ from typing import Any
 
 from benter_peru.cli import _resolve, _resolve_picks, _run
 from benter_peru.config import RuntimeConfig
-from benter_peru.ml.artifacts import RealModelArtifactConfig
-from benter_peru.ml.models import RealLightGBMRaceModel
+from benter_peru.ml.artifacts import EnsembleArtifactConfig
+from benter_peru.ml.models import EnsembleRaceModel
 from benter_peru.ui.queries import DashboardRepository
 from benter_peru.ui.service import BettingStrategyService, PredictionService
 
@@ -98,8 +98,8 @@ class DailyPipeline:
 
 
 def _predict_date(config: RuntimeConfig, target_date: date) -> list[JsonObject]:
-    artifact_config = RealModelArtifactConfig.from_env()
-    predictor = RealLightGBMRaceModel.load(
+    artifact_config = EnsembleArtifactConfig.from_env()
+    predictor = EnsembleRaceModel.load(
         model_path=artifact_config.model_path,
         dataset_path=artifact_config.dataset_path,
         expected_sha256=artifact_config.expected_sha256,

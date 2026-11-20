@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from benter_peru.ml.artifacts import RealModelArtifactConfig
+from benter_peru.ml.artifacts import EnsembleArtifactConfig
 from benter_peru.ml.models import RealModelArtifactError
 from benter_peru.ui.app import ARTIFACT_ERROR_MESSAGE, _load_prediction_service
 
@@ -12,7 +12,7 @@ from benter_peru.ui.app import ARTIFACT_ERROR_MESSAGE, _load_prediction_service
 def test_dashboard_service_loader_fails_closed_with_friendly_contract(
     tmp_path: Path,
 ) -> None:
-    config = RealModelArtifactConfig(
+    config = EnsembleArtifactConfig(
         model_path=tmp_path / "missing.pkl",
         dataset_path=tmp_path / "missing.csv",
     )
