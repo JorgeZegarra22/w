@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import date
 from hashlib import sha256
 from hmac import compare_digest
+from importlib.metadata import version
 from pathlib import Path
 from typing import Any, Protocol, cast
 
@@ -20,6 +21,7 @@ from sklearn.linear_model import LogisticRegression  # type: ignore[import-untyp
 from sklearn.pipeline import Pipeline  # type: ignore[import-untyped]
 from sklearn.preprocessing import StandardScaler  # type: ignore[import-untyped]
 
+from benter_peru.ml.ensemble import MODEL_WEIGHTS, EnsembleEstimator, normalize_race_scores
 from benter_peru.ml.features import FeatureVector
 from benter_peru.ml.probabilities import (
     plackett_luce_place_probabilities,
@@ -91,7 +93,8 @@ class RealModelArtifactError(ModelError):
 
 
 class _ProbabilityEstimator(Protocol):
-    n_features_in_: int
+    @property
+    def n_features_in_(self) -> int: ...
 
     def predict_proba(self, values: pd.DataFrame) -> object: ...
 
@@ -125,7 +128,7 @@ class RealLightGBMRaceModel:
         *,
         estimator: _ProbabilityEstimator,
         feature_engine: HistoricalLightGBMFeatureEngine,
-        global_win_rate: float,
+        global_win_rate: float | None,
         artifact_sha256: str,
         place_positions: int,
     ) -> None:
@@ -147,9 +150,7 @@ class RealLightGBMRaceModel:
         if not model_path.is_file():
             raise RealModelArtifactError(f"model artifact not found: {model_path}")
         if not dataset_path.is_file():
-            raise RealModelArtifactError(
-                f"historical dataset not found: {dataset_path}"
-            )
+            raise RealModelArtifactError(f"historical dataset not found: {dataset_path}")
         if place_positions <= 0:
             raise RealModelArtifactError("place_positions must be positive")
         digest = sha256(model_path.read_bytes()).hexdigest()
@@ -169,9 +170,7 @@ class RealLightGBMRaceModel:
         if not required.issubset(loaded):
             raise RealModelArtifactError("model artifact is missing required keys")
         feature_columns = tuple(str(value) for value in loaded["feature_cols"])
-        categorical_columns = tuple(
-            str(value) for value in loaded["categorical_cols"]
-        )
+        categorical_columns = tuple(str(value) for value in loaded["categorical_cols"])
         if feature_columns != LIGHTGBM_FEATURE_COLUMNS:
             raise RealModelArtifactError("model feature column contract is incompatible")
         if categorical_columns != CATEGORICAL_FEATURE_COLUMNS:
@@ -243,22 +242,15 @@ class RealLightGBMRaceModel:
         strengths = predicted[:, 1]
         if not np.isfinite(strengths).all() or np.any(strengths <= 0):
             raise RealModelArtifactError("real model returned invalid winner strengths")
-        total = float(strengths.sum())
-        normalized: dict[str, float] = {
-            participant_id: float(value / total)
-            for participant_id, value in zip(
-                participant_ids[:-1], strengths[:-1], strict=True
-            )
-        }
-        normalized[participant_ids[-1]] = 1.0 - sum(normalized.values())
-        if any(value <= 0 or not math.isfinite(value) for value in normalized.values()):
-            raise RealModelArtifactError("race normalization produced invalid probabilities")
+        try:
+            normalized = normalize_race_scores(participant_ids, strengths)
+        except ValueError as error:
+            raise RealModelArtifactError(str(error)) from error
         places = plackett_luce_place_probabilities(
             normalized, min(self._place_positions, len(participants))
         )
         fair_odds = {
-            participant_id: 1.0 / probability
-            for participant_id, probability in normalized.items()
+            participant_id: 1.0 / probability for participant_id, probability in normalized.items()
         }
         return RealRacePrediction(
             win_probabilities=normalized,
@@ -270,6 +262,106 @@ class RealLightGBMRaceModel:
         )
 
 
+class EnsembleRaceModel(RealLightGBMRaceModel):
+    """Hash-pinned ensemble using the same feature and probability interface."""
+
+    def __init__(
+        self,
+        *,
+        estimator: EnsembleEstimator,
+        feature_engine: HistoricalLightGBMFeatureEngine,
+        artifact_sha256: str,
+        place_positions: int,
+        training_rows: int,
+        training_start: date,
+        training_end: date,
+    ) -> None:
+        super().__init__(
+            estimator=estimator,
+            feature_engine=feature_engine,
+            global_win_rate=None,
+            artifact_sha256=artifact_sha256,
+            place_positions=place_positions,
+        )
+        self._ensemble_metadata = RealModelMetadata(
+            "ensemble_v1",
+            training_rows,
+            training_start,
+            training_end,
+            artifact_sha256,
+        )
+
+    @property
+    def metadata(self) -> RealModelMetadata:
+        return self._ensemble_metadata
+
+    def predict_race(
+        self,
+        *,
+        race_date: date,
+        distance_meters: int,
+        surface: str,
+        participants: tuple[RealRaceParticipant, ...],
+    ) -> RealRacePrediction:
+        if race_date <= self.metadata.training_end:
+            raise ModelError("the prediction date must follow the model's training period")
+        return super().predict_race(
+            race_date=race_date,
+            distance_meters=distance_meters,
+            surface=surface,
+            participants=participants,
+        )
+
+    @classmethod
+    def load(
+        cls, *, model_path: Path, dataset_path: Path, expected_sha256: str, place_positions: int = 3
+    ) -> EnsembleRaceModel:
+        if not model_path.is_file() or not dataset_path.is_file():
+            raise RealModelArtifactError("ensemble artifact or historical dataset not found")
+        if place_positions <= 0:
+            raise RealModelArtifactError("place_positions must be positive")
+        try:
+            payload = model_path.read_bytes()
+            digest = sha256(payload).hexdigest()
+            if not compare_digest(digest, expected_sha256.casefold()):
+                raise RealModelArtifactError("ensemble artifact SHA-256 mismatch")
+            loaded: Any = pickle.loads(payload)
+            if not isinstance(loaded, Mapping) or loaded.get("contract") != "ensemble-v1":
+                raise RealModelArtifactError("unsupported ensemble artifact contract")
+            if loaded["dataset_sha256"] != sha256(dataset_path.read_bytes()).hexdigest():
+                raise RealModelArtifactError("historical dataset SHA-256 mismatch")
+            if tuple(loaded["feature_columns"]) != LIGHTGBM_FEATURE_COLUMNS:
+                raise RealModelArtifactError("ensemble feature column contract is incompatible")
+            versions = {name: version(name) for name in ("lightgbm", "xgboost", "scikit-learn")}
+            if loaded["versions"] != versions:
+                raise RealModelArtifactError("incompatible ensemble library versions")
+            models, weights, levels = loaded["models"], loaded["weights"], loaded["levels"]
+            if models.keys() != MODEL_WEIGHTS.keys() or weights != MODEL_WEIGHTS:
+                raise RealModelArtifactError("ensemble models or weights are incompatible")
+            if levels.keys() != set(CATEGORICAL_FEATURE_COLUMNS):
+                raise RealModelArtifactError("ensemble category encoding is incompatible")
+            if any(
+                not callable(getattr(model, "predict_proba", None))
+                or getattr(model, "n_features_in_", None) != len(LIGHTGBM_FEATURE_COLUMNS)
+                or list(model.classes_) != [0, 1]
+                for model in models.values()
+            ):
+                raise RealModelArtifactError("ensemble estimator contract is incompatible")
+            return cls(
+                estimator=EnsembleEstimator(models, weights, levels),
+                feature_engine=HistoricalLightGBMFeatureEngine(dataset_path),
+                artifact_sha256=digest,
+                place_positions=place_positions,
+                training_rows=int(loaded["train_rows"]),
+                training_start=date.fromisoformat(loaded["training_start"]),
+                training_end=date.fromisoformat(loaded["training_end"]),
+            )
+        except RealModelArtifactError:
+            raise
+        except Exception as error:
+            raise RealModelArtifactError("ensemble artifact could not be loaded") from error
+
+
 def encode_feature_vector(features: FeatureVector) -> NDArray[np.float64]:
     """Encode the public FeatureVector in one stable numerical column order."""
 
@@ -278,9 +370,7 @@ def encode_feature_vector(features: FeatureVector) -> NDArray[np.float64]:
         features["wins_total"],
         features["win_rate"],
         features["podium_rate"],
-        365.0
-        if features["days_since_last_race"] is None
-        else features["days_since_last_race"],
+        365.0 if features["days_since_last_race"] is None else features["days_since_last_race"],
         features["distance_starts"],
         features["distance_wins"],
         features["distance_win_rate"],
@@ -304,9 +394,7 @@ class SyntheticRaceGenerator:
     def __init__(self, *, random_state: int = 20261118) -> None:
         self._random_state = random_state
 
-    def generate(
-        self, *, race_count: int = 500, field_size: int = 7
-    ) -> SyntheticTrainingSet:
+    def generate(self, *, race_count: int = 500, field_size: int = 7) -> SyntheticTrainingSet:
         if race_count <= 0:
             raise ModelError("race_count must be positive")
         if field_size < 2:
@@ -361,27 +449,19 @@ class SyntheticRaceGenerator:
             "wins_total": wins,
             "win_rate": wins / starts,
             "podium_rate": podiums / starts,
-            "days_since_last_race": (
-                None if rng.random() < 0.05 else int(rng.integers(5, 366))
-            ),
+            "days_since_last_race": (None if rng.random() < 0.05 else int(rng.integers(5, 366))),
             "distance_starts": distance_starts,
             "distance_wins": distance_wins,
             "distance_win_rate": distance_wins / distance_starts if distance_starts else 0.0,
             "distance_podium_rate": (
                 distance_podiums / distance_starts if distance_starts else 0.0
             ),
-            "distance_average_position": (
-                float(rng.uniform(1, 7)) if distance_starts else 0.0
-            ),
+            "distance_average_position": (float(rng.uniform(1, 7)) if distance_starts else 0.0),
             "surface_starts": surface_starts,
             "surface_wins": surface_wins,
             "surface_win_rate": surface_wins / surface_starts if surface_starts else 0.0,
-            "surface_podium_rate": (
-                surface_podiums / surface_starts if surface_starts else 0.0
-            ),
-            "surface_average_position": (
-                float(rng.uniform(1, 7)) if surface_starts else 0.0
-            ),
+            "surface_podium_rate": (surface_podiums / surface_starts if surface_starts else 0.0),
+            "surface_average_position": (float(rng.uniform(1, 7)) if surface_starts else 0.0),
         }
 
     @staticmethod
@@ -424,9 +504,7 @@ class BaselineRaceModel:
             raise ModelNotFittedError("model must be fitted before accessing its pipeline")
         return self._pipeline
 
-    def fit_synthetic(
-        self, *, race_count: int = 500, field_size: int = 7
-    ) -> BaselineRaceModel:
+    def fit_synthetic(self, *, race_count: int = 500, field_size: int = 7) -> BaselineRaceModel:
         training = SyntheticRaceGenerator(random_state=self._random_state).generate(
             race_count=race_count, field_size=field_size
         )
@@ -457,9 +535,7 @@ class BaselineRaceModel:
         )
         return self
 
-    def predict_race(
-        self, participants: Mapping[str, FeatureVector]
-    ) -> RacePrediction:
+    def predict_race(self, participants: Mapping[str, FeatureVector]) -> RacePrediction:
         if self._pipeline is None or self._metadata is None:
             raise ModelNotFittedError("model must be fitted before prediction")
         if len(participants) < 2:

@@ -31,6 +31,7 @@ LIGHTGBM_FEATURE_COLUMNS = (
     "Stud_Limpio",
 )
 CATEGORICAL_FEATURE_COLUMNS = ("Jinete_Limpio", "Prep_Limpio", "Stud_Limpio")
+COLD_START_WIN_RATE = 0.1
 _REQUIRED_DATASET_COLUMNS = frozenset(
     {"Fecha", "Posicion", "Caballo", "Jinete", "Preparador", "Stud", "Edad"}
 )
@@ -72,12 +73,8 @@ class HistoricalLightGBMFeatureEngine:
             raise HistoricalFeatureError("historical dataset contains invalid dates")
         for column in ("Caballo", "Jinete", "Preparador", "Stud"):
             frame[column] = frame[column].fillna("DESCONOCIDO").astype(str).str.strip()
-        frame["Target_Ganador"] = (
-            frame["Posicion"].astype(str).str.strip() == "1"
-        ).astype(int)
-        frame["Posicion_Num"] = pd.to_numeric(frame["Posicion"], errors="coerce").fillna(
-            8.0
-        )
+        frame["Target_Ganador"] = (frame["Posicion"].astype(str).str.strip() == "1").astype(int)
+        frame["Posicion_Num"] = pd.to_numeric(frame["Posicion"], errors="coerce").fillna(8.0)
         frame["Edad_Num"] = pd.to_numeric(frame["Edad"], errors="coerce")
         self._frame = frame
 
@@ -99,7 +96,7 @@ class HistoricalLightGBMFeatureEngine:
         distance_meters: int,
         surface: str,
         participants: tuple[RealRaceParticipant, ...],
-        global_win_rate: float,
+        global_win_rate: float | None,
     ) -> dict[str, LightGBMFeatureRow]:
         if distance_meters <= 0:
             raise HistoricalFeatureError("distance_meters must be positive")
@@ -107,7 +104,7 @@ class HistoricalLightGBMFeatureEngine:
             raise HistoricalFeatureError("surface must be arena or cesped")
         if len(participants) < 1:
             raise HistoricalFeatureError("race must contain participants")
-        if not 0 <= global_win_rate <= 1:
+        if global_win_rate is not None and not 0 <= global_win_rate <= 1:
             raise HistoricalFeatureError("global_win_rate must be between zero and one")
         participant_ids = [participant.participant_id for participant in participants]
         if any(not value for value in participant_ids) or len(set(participant_ids)) != len(
@@ -116,11 +113,16 @@ class HistoricalLightGBMFeatureEngine:
             raise HistoricalFeatureError("participant IDs must be nonempty and unique")
 
         history = self._frame[self._frame["Fecha_Dt"] < pd.Timestamp(race_date)]
+        clean_mode = global_win_rate is None
+        if global_win_rate is None:
+            global_win_rate = (
+                float(history["Target_Ganador"].mean()) if len(history) else (COLD_START_WIN_RATE)
+            )
         field_size = len(participants)
         rows: dict[str, LightGBMFeatureRow] = {}
         for participant in participants:
             horse_name = self._resolve_identity(
-                history, "Caballo", participant.horse_name, strict=True
+                history, "Caballo", participant.horse_name, strict=not clean_mode
             )
             jockey_name = self._resolve_identity(
                 history, "Jinete", participant.jockey_name, strict=False
@@ -128,26 +130,21 @@ class HistoricalLightGBMFeatureEngine:
             trainer_name = self._resolve_identity(
                 history, "Preparador", participant.trainer_name, strict=False
             )
-            stud_name = self._resolve_identity(
-                history, "Stud", participant.stud_name, strict=False
-            )
+            stud_name = self._resolve_identity(history, "Stud", participant.stud_name, strict=False)
             horse_rows = history[history["Caballo"] == horse_name]
-            if horse_rows.empty:
-                raise HistoricalFeatureError(
-                    f"{participant.horse_name} has no prior history"
-                )
-            latest = horse_rows.sort_values("Fecha_Dt").iloc[-1]
-            age = latest["Edad_Num"]
+            if horse_rows.empty and not clean_mode:
+                raise HistoricalFeatureError(f"{participant.horse_name} has no prior history")
+            ages = horse_rows.sort_values("Fecha_Dt", kind="stable")["Edad_Num"]
+            if clean_mode:
+                ages = ages.dropna()
+            age = ages.iloc[-1] if len(ages) else 4.0
             if pd.isna(age):
-                raise HistoricalFeatureError(
-                    f"{participant.horse_name} has no valid prior age"
-                )
+                raise HistoricalFeatureError(f"{participant.horse_name} has no valid prior age")
             jockey_rows = history[history["Jinete"] == jockey_name]
             trainer_rows = history[history["Preparador"] == trainer_name]
             stud_rows = history[history["Stud"] == stud_name]
             duo_rows = history[
-                (history["Jinete"] == jockey_name)
-                & (history["Preparador"] == trainer_name)
+                (history["Jinete"] == jockey_name) & (history["Preparador"] == trainer_name)
             ]
             j_rate, j_starts = self._smoothed(jockey_rows, global_win_rate, 5.0)
             p_rate, p_starts = self._smoothed(trainer_rows, global_win_rate, 5.0)
@@ -161,7 +158,7 @@ class HistoricalLightGBMFeatureEngine:
                 p_starts,
                 c_rate,
                 c_starts,
-                float(horse_rows["Posicion_Num"].mean()),
+                float(horse_rows["Posicion_Num"].mean()) if len(horse_rows) else 5.0,
                 s_rate,
                 duo_rate,
                 float(participant.weight),

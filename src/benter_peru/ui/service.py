@@ -223,8 +223,13 @@ class PredictionService:
             for participant in participants
         )
         training_rows = prediction.metadata.training_rows
+        origin = (
+            "Modelo: Ensamble (LightGBM + XGBoost + Random Forest) · Entrenado con "
+            if prediction.metadata.model_type == "ensemble_v1"
+            else "Predicción generada por el modelo LightGBM entrenado con "
+        )
         provenance = (
-            "Predicción generada por el modelo LightGBM entrenado con "
+            f"{origin}"
             f"{training_rows:,} registros históricos "
             f"({prediction.metadata.training_start.year}-"
             f"{prediction.metadata.training_end.year})"

@@ -9,11 +9,11 @@ import pandas as pd  # type: ignore[import-untyped]
 import streamlit as st
 
 from benter_peru.ml.analyst import AnalystRunner, senior_analysis
-from benter_peru.ml.artifacts import RealModelArtifactConfig
+from benter_peru.ml.artifacts import EnsembleArtifactConfig
 from benter_peru.ml.betting import BettingError
 from benter_peru.ml.models import (
+    EnsembleRaceModel,
     ModelError,
-    RealLightGBMRaceModel,
     RealModelArtifactError,
 )
 from benter_peru.ml.real_features import HistoricalFeatureError
@@ -43,8 +43,8 @@ def _repository(database_path: str) -> DashboardRepository:
     return DashboardRepository.open(Path(database_path))
 
 
-def _load_prediction_service(config: RealModelArtifactConfig) -> PredictionService:
-    model = RealLightGBMRaceModel.load(
+def _load_prediction_service(config: EnsembleArtifactConfig) -> PredictionService:
+    model = EnsembleRaceModel.load(
         model_path=config.model_path,
         dataset_path=config.dataset_path,
         expected_sha256=config.expected_sha256,
@@ -57,7 +57,7 @@ def _prediction_service(
     model_path: str, dataset_path: str, expected_sha256: str
 ) -> PredictionService:
     return _load_prediction_service(
-        RealModelArtifactConfig(
+        EnsembleArtifactConfig(
             model_path=Path(model_path),
             dataset_path=Path(dataset_path),
             expected_sha256=expected_sha256,
@@ -254,6 +254,7 @@ def _show_market_strategy(
         return
 
     st.subheader("📝 Pronóstico del Analista Senior")
+    st.caption(prediction.provenance)
     analyst = st.empty()
     snapshots = repository.horse_snapshots_for_race(race.id)
     runners = [AnalystRunner(row.mandil, row.horse_name, row.win_probability)
@@ -402,7 +403,7 @@ def main() -> None:
         st.error(DATABASE_ERROR_MESSAGE)
         st.stop()
         return
-    artifact_config = RealModelArtifactConfig.from_env()
+    artifact_config = EnsembleArtifactConfig.from_env()
     try:
         prediction_service = _prediction_service(
             str(artifact_config.model_path),

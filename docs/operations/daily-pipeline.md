@@ -11,7 +11,9 @@ apuestas.
 2. Configurar `BENTER_SOURCE_URL`, `BENTER_USER_AGENT`,
    `BENTER_DATABASE_PATH` y `BENTER_BLOB_ROOT`.
 3. Mantener el modelo y dataset locales en `var/ml/real-model/`, o definir
-   `BENTER_REAL_MODEL_PATH` y `BENTER_REAL_DATASET_PATH`.
+   `BENTER_ENSEMBLE_MODEL_PATH` y `BENTER_REAL_DATASET_PATH`. El artefacto
+   `ensemble_model_v1.pkl` se entrenó con LightGBM 4.7.0, XGBoost 3.4.1 y
+   scikit-learn 1.9.1. El cargador verifica esas versiones.
 4. Verificar que el SHA-256 del modelo coincide con el artefacto fijado por el
    proyecto.
 

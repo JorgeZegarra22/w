@@ -22,11 +22,12 @@ incluye el **Analista Senior** y el **Generador de Boletos**. El tag histórico
 | 10 | Revista y automatización | Extracción y materialización de picks de «Estudie su Polla», visualización y reporte diario local. |
 | 11 | Programa oficial de Monterrico | Recolección del programa con Playwright, almacenamiento de perfiles por inscripción y consulta de retrospectos y aprontes en el dashboard. |
 | 12 | Analista Senior y Generador de Boletos | Pronósticos narrativos basados en LightGBM y perfiles oficiales. Boletos de llegada en orden o en Box y apuestas concatenadas, incluido Pick 6. |
+| 13 | Ensamble predictivo | LightGBM, XGBoost y Random Forest con pesos fijos 40/40/20 y 18 características calculadas con historial anterior a cada jornada. |
 
 ## Arquitectura
 
 - **SQLite y Alembic** almacenan documentos, versiones, hechos con evidencia, entidades, carreras, historial y picks. Los PDFs quedan en el almacenamiento local de blobs.
-- **LightGBM** calcula probabilidades para los participantes de cada carrera a partir de sus condiciones y del historial disponible antes de su fecha. El modelo y el dataset se mantienen en archivos locales.
+- **Ensamble (LightGBM + XGBoost + Random Forest)** calcula probabilidades normalizadas por carrera. El artefacto y el dataset se mantienen en archivos locales y se verifican por SHA-256.
 - **Streamlit** consulta SQLite en modo de solo lectura y calcula predicciones y análisis de cuotas en memoria. La columna «Pick del Periodista» usa `★` para un pick confirmado, `⚠` para revisión y `-` cuando no hay un pick disponible para el participante.
 
 ## Puesta en marcha
@@ -42,7 +43,7 @@ Usa `.env.example` como referencia y exporta las variables en el entorno de la
 sesión. Configura `BENTER_DATABASE_PATH` para que el dashboard y el pipeline
 usen la misma base. Para el pipeline, define también `BENTER_SOURCE_URL`,
 `BENTER_USER_AGENT` y `BENTER_BLOB_ROOT`. Coloca el modelo y el dataset en
-`var/ml/real-model/` o configura `BENTER_REAL_MODEL_PATH` y
+`var/ml/real-model/` o configura `BENTER_ENSEMBLE_MODEL_PATH` y
 `BENTER_REAL_DATASET_PATH`. El pipeline aplica las migraciones al iniciar.
 
 Abre el dashboard cuando la base esté migrada y tenga datos.
@@ -127,3 +128,18 @@ todas las líneas cubiertas.
 El panel muestra **SIMULACIÓN MATEMÁTICA** por defecto. **VENTA CONFIRMADA**
 identifica una referencia de venta que ingresaste tras verificarla en el
 programa o en taquilla.
+
+## Entrenamiento del ensamble
+
+El artefacto local que usa el dashboard es `var/ml/real-model/ensemble_model_v1.pkl`.
+Para reproducir el entrenamiento, genera un candidato en una ruta nueva.
+
+```powershell
+python -m benter_peru.ml.entrenar_ensemble --dataset var/ml/real-model/dataset_oficial_resultados.csv --output var/ml/real-model/ensemble_candidate.pkl
+```
+
+El comando imprime el corte temporal, AUC-ROC y Log Loss por inscripción y
+el SHA-256 del candidato. El corte reserva el 18 de abril de 2026 y las fechas
+posteriores para validación. Las estadísticas usan resultados conocidos antes
+de cada fecha. El dashboard valida el hash fijado del artefacto y
+normaliza el ensamble después de combinar los tres puntajes.
