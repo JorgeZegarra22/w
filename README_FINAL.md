@@ -1,10 +1,11 @@
-# Benter Perú v1.0.0
+# Benter Perú v2.0.0
 
 Benter Perú procesa documentos hípicos de Monterrico, conserva la evidencia de
 los datos extraídos y calcula pronósticos por carrera para consultarlos en un
-dashboard local. La implementación de v1.0.0 en `master` está completa e
-incluye el **Analista Senior** y el **Generador de Boletos**. El tag histórico
-`v1.0.0` conserva el punto de publicación original.
+dashboard local. La evolución de **Benter Perú v1.0.0** incorpora en v2.0.0 un
+ensamble de **LightGBM, XGBoost y Random Forest** con pesos fijos 40/40/20. El
+Analista Senior y el Generador de Boletos usan las probabilidades del ensamble.
+El tag histórico `v1.0.0` conserva el punto de publicación original.
 
 ## Entregables
 
@@ -143,3 +144,18 @@ el SHA-256 del candidato. El corte reserva el 18 de abril de 2026 y las fechas
 posteriores para validación. Las estadísticas usan resultados conocidos antes
 de cada fecha. El dashboard valida el hash fijado del artefacto y
 normaliza el ensamble después de combinar los tres puntajes.
+
+La comparación usó 25.138 inscripciones de entrenamiento y 6.280 de
+validación, con las mismas 18 características para todos los modelos. Las
+métricas corresponden a los puntajes binarios por inscripción antes de la
+normalización por carrera.
+
+| Modelo | AUC-ROC ↑ | Log Loss ↓ |
+| --- | ---: | ---: |
+| LightGBM reentrenado | 0,669679 | 0,375186 |
+| XGBoost | 0,681292 | 0,370790 |
+| Random Forest | 0,677695 | 0,371599 |
+| Ensamble 40/40/20 | 0,681756 | 0,370045 |
+
+En este conjunto reservado, el ensamble mejoró el AUC-ROC en 0,01208 y redujo
+el Log Loss en 0,00514 frente a LightGBM reentrenado con el mismo protocolo.
