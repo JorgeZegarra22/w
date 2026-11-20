@@ -1,11 +1,12 @@
-# Benter Perú v2.0.0
+# Benter Perú v3.0.0
 
 Benter Perú procesa documentos hípicos de Monterrico, conserva la evidencia de
 los datos extraídos y calcula pronósticos por carrera para consultarlos en un
 dashboard local. La evolución de **Benter Perú v1.0.0** incorpora en v2.0.0 un
 ensamble de **LightGBM, XGBoost y Random Forest** con pesos fijos 40/40/20. El
 Analista Senior y el Generador de Boletos usan las probabilidades del ensamble.
-El tag histórico `v1.0.0` conserva el punto de publicación original.
+La versión v3.0.0 añade la **Simulación de Ritmo (What-If)**. Los tags
+históricos `v1.0.0` y `v2.0.0` conservan sus puntos de publicación.
 
 ## Entregables
 
@@ -24,6 +25,7 @@ El tag histórico `v1.0.0` conserva el punto de publicación original.
 | 11 | Programa oficial de Monterrico | Recolección del programa con Playwright, almacenamiento de perfiles por inscripción y consulta de retrospectos y aprontes en el dashboard. |
 | 12 | Analista Senior y Generador de Boletos | Pronósticos narrativos basados en LightGBM y perfiles oficiales. Boletos de llegada en orden o en Box y apuestas concatenadas, incluido Pick 6. |
 | 13 | Ensamble predictivo | LightGBM, XGBoost y Random Forest con pesos fijos 40/40/20 y 18 características calculadas con historial anterior a cada jornada. |
+| 14 | Simulación de Ritmo (What-If) | Escenarios Monte Carlo con estilos editables, alerta de colisión y comparación con el pronóstico del ensamble. |
 
 ## Arquitectura
 
@@ -159,3 +161,22 @@ normalización por carrera.
 
 En este conjunto reservado, el ensamble mejoró el AUC-ROC en 0,01208 y redujo
 el Log Loss en 0,00514 frente a LightGBM reentrenado con el mismo protocolo.
+
+## Simulación de Ritmo (What-If)
+
+En el menú lateral, abre **Simulación de Ritmo** y elige la reunión y la
+carrera. Puedes usar el estilo automático o asignar **Puntero**, **Cerrador**
+o **Medio** a cada inscrito. Si el historial carece de señales tácticas, la
+opción automática muestra **Medio · sin evidencia**. Los estilos asignados
+por el usuario aparecen como **manual** en los resultados.
+
+Pulsa **Simular 10,000 carreras** para comparar la probabilidad de victoria
+del ensamble con la ajustada por ritmo. Con tres o más punteros, el simulador
+activa la alerta de colisión, penaliza a los punteros y bonifica a los
+cerradores. Con menos de tres punteros, conserva las probabilidades del
+ensamble. Los parámetros de desgaste y bonificación son hipotéticos.
+
+Para reproducir el ejemplo del Derby, selecciona **2026-477 → Carrera 10**.
+Asigna **Puntero** a Shotra, Mr Peggy y Mr Scott, y **Cerrador** a Viejo
+Lindo. Deja a los demás en automático. La misma vista funciona con las 34
+carreras de la base del fin de semana.
