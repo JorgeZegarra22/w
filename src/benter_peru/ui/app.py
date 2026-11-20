@@ -16,7 +16,9 @@ from benter_peru.ml.models import (
     ModelError,
     RealModelArtifactError,
 )
+from benter_peru.ml.pace import classify_pace
 from benter_peru.ml.real_features import HistoricalFeatureError
+from benter_peru.ui.pace_panel import show_pace_panel
 from benter_peru.ui.queries import (
     DATABASE_ERROR_MESSAGE,
     DashboardDatabaseError,
@@ -173,12 +175,16 @@ def _show_predictions(
             race.meeting_code, race.race_number
         ),
     )
+    snapshots = repository.horse_snapshots_for_race(race.id)
     frame = pd.DataFrame.from_records(
         [
             {
                 "Mandil": row.mandil,
                 "Caballo": row.horse_name,
                 "Pick del Periodista": pick_labels[row.participant_id],
+                "Estilo": classify_pace(
+                    snapshots[row.mandil].profile if row.mandil in snapshots else {}
+                ).label,
                 "Prob. Ganar": row.win_probability,
                 "Prob. Placé (Top 3)": row.top_three_probability,
                 "Dividendo Justo": row.fair_odds,
@@ -417,7 +423,7 @@ def main() -> None:
 
     view = st.sidebar.radio(
         "Navegación",
-        ("Resumen", "Carreras", "Predicciones", "Estrategia de Apuestas"),
+        ("Resumen", "Carreras", "Predicciones", "Estrategia de Apuestas", "Simulación de Ritmo"),
     )
     st.sidebar.caption("SQLite · modo de solo lectura")
     if view == "Resumen":
@@ -426,8 +432,13 @@ def main() -> None:
         _show_races(repository)
     elif view == "Predicciones":
         _show_predictions(repository, prediction_service)
-    else:
+    elif view == "Estrategia de Apuestas":
         _show_market_strategy(repository, prediction_service)
+    else:
+        st.header("Simulación de Ritmo")
+        race = _select_race(repository)
+        if race is not None:
+            show_pace_panel(repository, prediction_service, race)
 
 
 if __name__ == "__main__":
