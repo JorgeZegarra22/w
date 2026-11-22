@@ -41,35 +41,30 @@ def simulate_race(
         or not isclose(float(base.sum()), 1.0, abs_tol=1e-9)
     ):
         raise ValueError("Los participantes deben tener IDs únicos y probabilidades que sumen 1.")
-    if count_leaders(participants) >= COLLISION_LEADERS:
-        delta = np.asarray(
-            [
-                -LEADER_PENALTY
-                if item.style == PaceStyle.PUNTERO
-                else CLOSER_BONUS
-                if item.style == PaceStyle.CERRADOR
-                else 0.0
-                for item in participants
-            ]
-        )
-        # Log-strength plus Gaussian noise supplies the paired counterfactual winners.
-        rng = np.random.default_rng(seed)
-        energy = np.log(base) + rng.normal(0, NOISE_SCALE, (num_simulations, len(ids)))
-        neutral = np.argmax(energy, axis=1)
-        tactical = np.argmax(energy + delta, axis=1)
-        transitions = np.zeros((len(ids), len(ids)), dtype=np.float64)
-        np.add.at(transitions, (neutral, tactical), 1)
-        totals = transitions.sum(axis=1)
-        for index, total in enumerate(totals):
-            if total:
-                transitions[index] /= total
-            else:
-                transitions[index, index] = 1
-        adjusted = base @ transitions
-    else:
-        adjusted = base
-    if count_leaders(participants) < COLLISION_LEADERS and sum(base.tolist()) == 1.0:
+    collision = count_leaders(participants) >= COLLISION_LEADERS
+    delta = np.zeros(len(ids), dtype=np.float64)
+    if collision:
+        for index, item in enumerate(participants):
+            if item.style == PaceStyle.PUNTERO:
+                delta[index] = -LEADER_PENALTY
+            elif item.style == PaceStyle.CERRADOR:
+                delta[index] = CLOSER_BONUS
+    # Log-strength plus Gaussian noise supplies the paired counterfactual winners.
+    rng = np.random.default_rng(seed)
+    energy = np.log(base) + rng.normal(0, NOISE_SCALE, (num_simulations, len(ids)))
+    neutral = np.argmax(energy, axis=1)
+    tactical = np.argmax(energy + delta, axis=1)
+    if np.array_equal(neutral, tactical) and sum(base.tolist()) == 1.0:
         return dict(zip(ids, base.tolist(), strict=True))
+    transitions = np.zeros((len(ids), len(ids)), dtype=np.float64)
+    np.add.at(transitions, (neutral, tactical), 1)
+    totals = transitions.sum(axis=1)
+    for index, total in enumerate(totals):
+        if total:
+            transitions[index] /= total
+        else:
+            transitions[index, index] = 1
+    adjusted = base @ transitions
     total = fsum(adjusted.tolist())
     # Use the largest mass as residual to keep rounding away from near-zero entries.
     residual = int(np.argmax(adjusted))

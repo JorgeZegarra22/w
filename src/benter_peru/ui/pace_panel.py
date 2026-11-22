@@ -1,5 +1,8 @@
 """Race-scoped controls for exploring Monte Carlo pace scenarios."""
 
+import os
+from pathlib import Path
+
 import pandas as pd  # type: ignore[import-untyped]
 import streamlit as st
 
@@ -12,6 +15,7 @@ from benter_peru.ml.simulator import (
     count_leaders,
     simulate_race,
 )
+from benter_peru.ml.video_pace import load_video_styles
 from benter_peru.ui.queries import DashboardRepository, RaceOption
 from benter_peru.ui.service import PredictionService
 
@@ -26,6 +30,21 @@ def show_pace_panel(
     if len(entrants) < 2:
         st.info("Se necesitan al menos dos participantes para simular la carrera.")
         return
+    styles_path = Path(os.environ.get("BENTER_PACE_STYLES_PATH", "estilos_domingo_2026.csv"))
+    try:
+        video_styles = (
+            load_video_styles(
+                styles_path.read_text(encoding="utf-8-sig"),
+                race.scheduled_date,
+                race.race_number,
+                {item.mandil: item.horse_name for item in entrants},
+            )
+            if styles_path.is_file()
+            else {}
+        )
+    except (OSError, ValueError) as error:
+        st.warning(f"Estilos de video no disponibles para esta carrera. {error}")
+        video_styles = {}
     snapshots = repository.horse_snapshots_for_race(race.id)
     assessments = {
         item.mandil: classify_pace(
@@ -33,10 +52,15 @@ def show_pace_panel(
         )
         for item in entrants
     }
-    st.caption("Escenario táctico con parámetros hipotéticos. Los estilos manuales son supuestos.")
+    st.caption("El simulador usa parámetros tácticos hipotéticos.")
     overrides: dict[int, PaceStyle] = {}
     with st.form(f"pace-form-{race.id}"):
         for item in entrants:
+            if video_styles:
+                video_style = video_styles[item.mandil]
+                st.write(f"{item.mandil} · {item.horse_name} · {video_style.label}")
+                overrides[item.mandil] = video_style.style
+                continue
             assessment = assessments[item.mandil]
             labels = {label: label for label in _STYLE_OPTIONS}
             labels[_AUTOMATIC] = f"Automático · {assessment.label}"
@@ -84,7 +108,9 @@ def show_pace_panel(
                 "Mandil": row.mandil,
                 "Caballo": row.horse_name,
                 "Estilo": (
-                    f"{overrides[row.mandil].value.capitalize()} · manual"
+                    video_styles[row.mandil].label
+                    if video_styles
+                    else f"{overrides[row.mandil].value.capitalize()} · manual"
                     if row.mandil in overrides
                     else assessments[row.mandil].label
                 ),
