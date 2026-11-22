@@ -33,3 +33,20 @@ def test_video_styles_match_race_name_and_club_number() -> None:
 def test_invalid_video_match_fails_closed(row: str, error: str) -> None:
     with pytest.raises(ValueError, match=error):
         load_video_styles(HEADER + row, DAY, 10, {4: "A"})
+
+
+def test_debutante_with_placeholder_date_and_positions_has_no_tactical_evidence() -> None:
+    source = (
+        HEADER.rstrip()
+        + ",initial_position,final_position\n"
+        + (
+            "3ª,1,Debut,2026-11-22,2026-11-22,,Debutante,3,3\n"
+            "3ª,2,Segundo,2026-11-22,2026-11-01,v2,Puntero,1,5\n"
+        )
+    )
+    styles = load_video_styles(source, DAY, 3, {1: "Debut", 2: "Segundo"})
+    assert styles[1].style == PaceStyle.MEDIO
+    assert styles[1].label == "Debutante · sin video previo"
+    assert styles[1].previous_race_date is None
+    assert styles[1].initial_position is None and styles[1].final_position is None
+    assert styles[2].style == PaceStyle.PUNTERO

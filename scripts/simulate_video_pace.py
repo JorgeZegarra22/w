@@ -14,8 +14,75 @@ from benter_peru.ml.simulator import (
     simulate_race,
 )
 from benter_peru.ml.video_pace import load_video_styles
-from benter_peru.ui.queries import DashboardRepository
+from benter_peru.ui.queries import DashboardRepository, RaceOption
 from benter_peru.ui.service import PredictionService
+
+SIMULATIONS = 10_000
+SEED = 42
+
+
+def simulate_official_race(
+    repository: DashboardRepository, service: PredictionService, race: RaceOption, content: str
+) -> dict[str, object]:
+    entrants = repository.participants_for_race(race.id)
+    try:
+        styles = load_video_styles(
+            content,
+            race.scheduled_date,
+            race.race_number,
+            {e.mandil: e.horse_name for e in entrants},
+        )
+    except ValueError as exc:
+        raise ValueError(f"Carrera {race.race_number}: {exc}") from exc
+    if not styles:
+        raise ValueError(f"Carrera {race.race_number}: el CSV no contiene estilos")
+    prediction = service.for_race(race, entrants)
+
+    participants = [
+        PaceParticipant(r.participant_id, r.win_probability, styles[r.mandil].style)
+        for r in prediction.rows
+    ]
+    adjusted = simulate_race(participants, SIMULATIONS, seed=SEED)
+    leaders = count_leaders(participants)
+    runners = [
+        {
+            "mandil": r.mandil,
+            "horse": r.horse_name,
+            "source_style": assessment.source_style,
+            "simulator_style": assessment.style.value,
+            "video_code": assessment.video_code,
+            "previous_race_date": (
+                assessment.previous_race_date.isoformat() if assessment.previous_race_date else None
+            ),
+            "initial_position": assessment.initial_position,
+            "final_position": assessment.final_position,
+            "ensemble_probability": r.win_probability,
+            "pace_probability": adjusted[r.participant_id],
+            "delta_percentage_points": 100 * (adjusted[r.participant_id] - r.win_probability),
+        }
+        for r in prediction.rows
+        for assessment in (styles[r.mandil],)
+    ]
+    most_helped = max(
+        prediction.rows,
+        key=lambda row: (adjusted[row.participant_id] - row.win_probability, -row.mandil),
+    )
+    beneficiary = None
+    if (
+        leaders >= COLLISION_LEADERS
+        and adjusted[most_helped.participant_id] > most_helped.win_probability
+    ):
+        beneficiary = next(row for row in runners if row["mandil"] == most_helped.mandil)
+    return {
+        "race": race.race_number,
+        "race_date": race.scheduled_date.isoformat(),
+        "leaders": leaders,
+        "pace_collision": leaders >= COLLISION_LEADERS,
+        "original_probability_sum": sum(r.win_probability for r in prediction.rows),
+        "adjusted_probability_sum": sum(adjusted.values()),
+        "most_helped": beneficiary,
+        "runners": runners,
+    }
 
 
 def main() -> None:
@@ -23,85 +90,52 @@ def main() -> None:
     parser.add_argument("--database", type=Path, required=True)
     parser.add_argument("--styles", type=Path, required=True)
     parser.add_argument("--meeting", required=True)
-    parser.add_argument("--race", type=int, required=True)
+    parser.add_argument("--race", type=int, help="omit to simulate the entire meeting")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if args.output.exists():
         parser.error("el archivo de salida debe ser nuevo")
 
     payload = args.styles.read_bytes()
+    content = payload.decode("utf-8-sig")
     repository = DashboardRepository.open(args.database)
     try:
-        race = next(
-            (r for r in repository.races_for_meeting(args.meeting) if r.race_number == args.race),
-            None,
-        )
-        if race is None:
+        races = [
+            race
+            for race in repository.races_for_meeting(args.meeting)
+            if args.race is None or race.race_number == args.race
+        ]
+        if not races:
             parser.error("la reunión o carrera no existe en la base")
-        entrants = repository.participants_for_race(race.id)
-        styles = load_video_styles(
-            payload.decode("utf-8-sig"),
-            race.scheduled_date,
-            race.race_number,
-            {e.mandil: e.horse_name for e in entrants},
-        )
-        if not styles:
-            parser.error("el CSV no contiene estilos para la carrera seleccionada")
         config = EnsembleArtifactConfig.from_env()
         model = EnsembleRaceModel.load(
             model_path=config.model_path,
             dataset_path=config.dataset_path,
             expected_sha256=config.expected_sha256,
         )
-        prediction = PredictionService(model).for_race(race, entrants)
+        service = PredictionService(model)
+        race_reports = [
+            simulate_official_race(repository, service, race, content) for race in races
+        ]
+    except ValueError as exc:
+        parser.error(str(exc))
     finally:
         repository.close()
 
-    participants = [
-        PaceParticipant(r.participant_id, r.win_probability, styles[r.mandil].style)
-        for r in prediction.rows
-    ]
-    simulations, seed = 10_000, 42
-    adjusted = simulate_race(participants, simulations, seed=seed)
     report = {
         "meeting": args.meeting,
-        "race": args.race,
-        "race_date": race.scheduled_date.isoformat(),
         "source": args.styles.name,
         "source_sha256": sha256(payload).hexdigest(),
         "model_sha256": model.metadata.artifact_sha256,
-        "simulations_requested": simulations,
-        "seed": seed,
-        "leaders": count_leaders(participants),
+        "simulations_requested": SIMULATIONS,
+        "seed": SEED,
         "collision_threshold": COLLISION_LEADERS,
-        "pace_collision": count_leaders(participants) >= COLLISION_LEADERS,
-        "original_probability_sum": sum(r.win_probability for r in prediction.rows),
-        "adjusted_probability_sum": sum(adjusted.values()),
-        "runners": [
-            {
-                "mandil": r.mandil,
-                "horse": r.horse_name,
-                "source_style": assessment.source_style,
-                "simulator_style": assessment.style.value,
-                "video_code": assessment.video_code,
-                "previous_race_date": (
-                    assessment.previous_race_date.isoformat()
-                    if assessment.previous_race_date
-                    else None
-                ),
-                "initial_position": assessment.initial_position,
-                "final_position": assessment.final_position,
-                "ensemble_probability": r.win_probability,
-                "pace_probability": adjusted[r.participant_id],
-                "delta_percentage_points": 100 * (adjusted[r.participant_id] - r.win_probability),
-            }
-            for r in prediction.rows
-            for assessment in (styles[r.mandil],)
-        ],
     }
+    report.update({"races": race_reports} if args.race is None else race_reports[0])
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with args.output.open("x", encoding="utf-8") as output:
         json.dump(report, output, ensure_ascii=False, indent=2)
+        output.write("\n")
     print(json.dumps(report, ensure_ascii=False, indent=2))
 
 

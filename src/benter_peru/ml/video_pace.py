@@ -42,6 +42,8 @@ class VideoStyle:
 
     @property
     def label(self) -> str:
+        if self.video_code is None and normalize_name(self.source_style) == "debutante":
+            return "Debutante · sin video previo"
         return (
             f"{self.style.value.capitalize()} · video" if self.video_code else "Medio · sin video"
         )
@@ -75,9 +77,13 @@ def load_video_styles(
         code = (row.get("video_code") or "").strip() or None
         raw_date = (row.get("last_race_date") or "").strip()
         previous = date.fromisoformat(raw_date) if raw_date else None
+        if key == "debutante" and code is None and (previous is None or previous <= race_date):
+            # The export can fill placeholders even when no prior video exists.
+            styles[mandil] = VideoStyle(PaceStyle.MEDIO, raw_style, None, None, None, None)
+            continue
         if previous is not None and previous >= race_date:
             raise ValueError(f"El video del mandil {mandil} debe ser anterior a la carrera.")
-        if key != "debutante" and (previous is None or code is None):
+        if previous is None or code is None:
             raise ValueError(
                 f"Falta la fecha anterior o el identificador de video del mandil {mandil}."
             )
