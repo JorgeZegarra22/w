@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date
 from io import StringIO
+from math import isfinite
 
 from benter_peru.entities.normalization import normalize_name
 from benter_peru.ml.pace import PaceStyle
@@ -39,6 +40,9 @@ class VideoStyle:
     video_code: str | None
     initial_position: str | None
     final_position: str | None
+    stride_frequency: float | None = None
+    fatigue_factor: str | None = None
+    stride_drop_pct: float | None = None
 
     @property
     def label(self) -> str:
@@ -47,6 +51,19 @@ class VideoStyle:
         return (
             f"{self.style.value.capitalize()} · video" if self.video_code else "Medio · sin video"
         )
+
+
+def _measurement(row: Mapping[str, str | None], column: str, mandil: int) -> float | None:
+    raw = (row.get(column) or "").strip()
+    if not raw:
+        return None
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise ValueError(f"{column} inválido en el mandil {mandil}.") from exc
+    if not isfinite(value) or (column == "stride_frequency" and value <= 0):
+        raise ValueError(f"{column} inválido en el mandil {mandil}.")
+    return value
 
 
 def load_video_styles(
@@ -94,6 +111,9 @@ def load_video_styles(
             code,
             (row.get("initial_position") or "").strip() or None,
             (row.get("final_position") or "").strip() or None,
+            _measurement(row, "stride_frequency", mandil),
+            (row.get("fatigue_factor") or "").strip() or None,
+            _measurement(row, "stride_drop_pct", mandil),
         )
     if styles and styles.keys() != expected.keys():
         raise ValueError("Faltan mandiles de la nómina en el CSV para esta carrera.")

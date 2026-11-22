@@ -2,7 +2,7 @@
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from math import fsum, isclose
+from math import fsum, isclose, isfinite
 
 import numpy as np
 
@@ -12,6 +12,9 @@ COLLISION_LEADERS = 3
 LEADER_PENALTY = 0.35
 CLOSER_BONUS = 0.20
 NOISE_SCALE = 0.9
+FINAL_STRETCH_METERS = 400
+FINAL_STRETCH_ENERGY = {"fatiga alta": -0.55, "resistencia alta": 0.25}
+MAX_STRIDE_MODULATION = 0.30
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,6 +22,16 @@ class PaceParticipant:
     participant_id: str
     probability: float
     style: PaceStyle
+    fatigue_factor: str | None = None
+    stride_drop_pct: float | None = None
+
+    def final_stretch_energy(self) -> float:
+        """Apply a heuristic log-strength change at the end of the race."""
+        if self.stride_drop_pct is not None and not isfinite(self.stride_drop_pct):
+            raise ValueError("La variación de zancada debe ser finita.")
+        factor = " ".join((self.fatigue_factor or "").lower().split())
+        stride_change = min(abs(self.stride_drop_pct or 0.0) / 100, MAX_STRIDE_MODULATION)
+        return FINAL_STRETCH_ENERGY.get(factor, 0.0) * (1 + stride_change)
 
 
 def count_leaders(participants: Sequence[PaceParticipant]) -> int:
@@ -26,9 +39,13 @@ def count_leaders(participants: Sequence[PaceParticipant]) -> int:
 
 
 def simulate_race(
-    participants: Sequence[PaceParticipant], num_simulations: int = 10_000, *, seed: int = 42
+    participants: Sequence[PaceParticipant],
+    num_simulations: int = 10_000,
+    *,
+    seed: int = 42,
+    include_biomechanics: bool = True,
 ) -> dict[str, float]:
-    """Transfer baseline mass using the same Gaussian draws with and without pace."""
+    """Transfer baseline mass using shared Gaussian draws across scenarios."""
     if len(participants) < 2 or num_simulations < 1:
         raise ValueError("Se requieren dos participantes y al menos una simulación.")
     ids = tuple(item.participant_id for item in participants)
@@ -53,7 +70,10 @@ def simulate_race(
     rng = np.random.default_rng(seed)
     energy = np.log(base) + rng.normal(0, NOISE_SCALE, (num_simulations, len(ids)))
     neutral = np.argmax(energy, axis=1)
-    tactical = np.argmax(energy + delta, axis=1)
+    final_energy = energy + delta
+    if include_biomechanics:
+        final_energy += np.asarray([item.final_stretch_energy() for item in participants])
+    tactical = np.argmax(final_energy, axis=1)
     if np.array_equal(neutral, tactical) and sum(base.tolist()) == 1.0:
         return dict(zip(ids, base.tolist(), strict=True))
     transitions = np.zeros((len(ids), len(ids)), dtype=np.float64)

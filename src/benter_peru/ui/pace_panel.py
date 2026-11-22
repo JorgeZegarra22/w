@@ -11,6 +11,7 @@ from benter_peru.ml.pace import PaceStyle, classify_pace
 from benter_peru.ml.real_features import HistoricalFeatureError
 from benter_peru.ml.simulator import (
     COLLISION_LEADERS,
+    FINAL_STRETCH_METERS,
     PaceParticipant,
     count_leaders,
     simulate_race,
@@ -52,13 +53,25 @@ def show_pace_panel(
         )
         for item in entrants
     }
-    st.caption("El simulador usa parámetros tácticos hipotéticos.")
+    st.caption(
+        "El simulador usa parámetros tácticos hipotéticos."
+        + (
+            f" La biomecánica aplica un ajuste sin calibración en los últimos "
+            f"{FINAL_STRETCH_METERS} m."
+            if video_styles
+            else ""
+        )
+    )
     overrides: dict[int, PaceStyle] = {}
     with st.form(f"pace-form-{race.id}"):
         for item in entrants:
             if video_styles:
                 video_style = video_styles[item.mandil]
-                st.write(f"{item.mandil} · {item.horse_name} · {video_style.label}")
+                stride = video_style.stride_frequency
+                details = f" · {stride:.2f} zancadas/s" if stride is not None else ""
+                if video_style.fatigue_factor:
+                    details += f" · {video_style.fatigue_factor}"
+                st.write(f"{item.mandil} · {item.horse_name} · {video_style.label}{details}")
                 overrides[item.mandil] = video_style.style
                 continue
             assessment = assessments[item.mandil]
@@ -83,10 +96,14 @@ def show_pace_panel(
                 row.participant_id,
                 row.win_probability,
                 overrides.get(row.mandil, assessments[row.mandil].style),
+                video_style.fatigue_factor if video_style else None,
+                video_style.stride_drop_pct if video_style else None,
             )
             for row in prediction.rows
+            for video_style in (video_styles.get(row.mandil),)
         ]
-        adjusted = simulate_race(participants)
+        pace = simulate_race(participants, include_biomechanics=False)
+        adjusted = simulate_race(participants) if video_styles else pace
     except (HistoricalFeatureError, ModelError, ValueError) as error:
         st.error(f"No fue posible simular la carrera. {error}")
         return
@@ -115,7 +132,16 @@ def show_pace_panel(
                     else assessments[row.mandil].label
                 ),
                 "Prob. Ensamble": row.win_probability,
-                "Prob. ajustada por ritmo": adjusted[row.participant_id],
+                "Prob. ajustada por ritmo": pace[row.participant_id],
+                **(
+                    {
+                        "Zancadas/s": video_styles[row.mandil].stride_frequency,
+                        "Factor de fatiga": video_styles[row.mandil].fatigue_factor or "—",
+                        "Prob. ritmo + biomecánica": adjusted[row.participant_id],
+                    }
+                    if video_styles
+                    else {}
+                ),
             }
             for row in prediction.rows
         ]
@@ -127,6 +153,10 @@ def show_pace_panel(
         width="stretch",
         column_config={
             column: st.column_config.NumberColumn(format="percent")
-            for column in ("Prob. Ensamble", "Prob. ajustada por ritmo")
+            for column in (
+                "Prob. Ensamble",
+                "Prob. ajustada por ritmo",
+                "Prob. ritmo + biomecánica",
+            )
         },
     )

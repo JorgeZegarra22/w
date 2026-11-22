@@ -40,3 +40,16 @@ def test_two_leaders_do_not_create_a_pace_collision() -> None:
         PaceParticipant("c", 0.25, PaceStyle.CERRADOR),
     )
     assert simulate_race(field, 10_000) == {"a": 0.5, "b": 0.25, "c": 0.25}
+
+
+def test_biomechanics_applies_independently_of_pace_collision() -> None:
+    field = (
+        PaceParticipant("a", 0.4, PaceStyle.PUNTERO, "Fatiga Alta", 18.0),
+        PaceParticipant("b", 0.35, PaceStyle.CERRADOR, "Resistencia Alta", -5.0),
+        PaceParticipant("c", 0.25, PaceStyle.MEDIO, "Fatiga Moderada", 8.0),
+    )
+    pace = simulate_race(field, include_biomechanics=False)
+    adjusted = simulate_race(field)
+    assert pace == {"a": 0.4, "b": 0.35, "c": 0.25}
+    assert adjusted["a"] < pace["a"] and adjusted["b"] > pace["b"]
+    assert sum(adjusted.values()) == 1.0
