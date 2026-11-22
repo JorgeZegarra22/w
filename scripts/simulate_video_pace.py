@@ -9,9 +9,12 @@ from benter_peru.ml.artifacts import EnsembleArtifactConfig
 from benter_peru.ml.models import EnsembleRaceModel
 from benter_peru.ml.simulator import (
     COLLISION_LEADERS,
+    DRAFTING_BONUS,
+    EXPOSED_LEADER_PENALTY,
     FINAL_STRETCH_ENERGY,
     FINAL_STRETCH_METERS,
     MAX_STRIDE_MODULATION,
+    OVERGROUND_PENALTY,
     PaceParticipant,
     count_leaders,
     simulate_race,
@@ -48,11 +51,14 @@ def simulate_official_race(
             assessment.style,
             assessment.fatigue_factor,
             assessment.stride_drop_pct,
+            assessment.drafting_saved_energy,
+            assessment.overground_penalty,
         )
         for r in prediction.rows
         for assessment in (styles[r.mandil],)
     ]
     pace = simulate_race(participants, SIMULATIONS, seed=SEED, include_biomechanics=False)
+    biomechanics = simulate_race(participants, SIMULATIONS, seed=SEED, include_trip=False)
     adjusted = simulate_race(participants, SIMULATIONS, seed=SEED)
     leaders = count_leaders(participants)
     runners = [
@@ -70,11 +76,17 @@ def simulate_official_race(
             "stride_frequency": assessment.stride_frequency,
             "fatigue_factor": assessment.fatigue_factor,
             "stride_drop_pct": assessment.stride_drop_pct,
+            "drafting_saved_energy": assessment.drafting_saved_energy,
+            "overground_penalty": assessment.overground_penalty,
+            "lane_position": assessment.lane_position,
             "ensemble_probability": r.win_probability,
             "pace_probability": pace[r.participant_id],
-            "biomechanics_probability": adjusted[r.participant_id],
+            "biomechanics_probability": biomechanics[r.participant_id],
             "biomechanics_delta_percentage_points": 100
-            * (adjusted[r.participant_id] - pace[r.participant_id]),
+            * (biomechanics[r.participant_id] - pace[r.participant_id]),
+            "combined_probability": adjusted[r.participant_id],
+            "trip_delta_percentage_points": 100
+            * (adjusted[r.participant_id] - biomechanics[r.participant_id]),
             "delta_percentage_points": 100 * (adjusted[r.participant_id] - r.win_probability),
         }
         for r in prediction.rows
@@ -82,10 +94,13 @@ def simulate_official_race(
     ]
     most_helped = max(
         prediction.rows,
-        key=lambda row: (adjusted[row.participant_id] - pace[row.participant_id], -row.mandil),
+        key=lambda row: (
+            adjusted[row.participant_id] - biomechanics[row.participant_id],
+            -row.mandil,
+        ),
     )
     beneficiary = None
-    if adjusted[most_helped.participant_id] > pace[most_helped.participant_id]:
+    if adjusted[most_helped.participant_id] > biomechanics[most_helped.participant_id]:
         beneficiary = next(row for row in runners if row["mandil"] == most_helped.mandil)
     return {
         "race": race.race_number,
@@ -94,6 +109,7 @@ def simulate_official_race(
         "pace_collision": leaders >= COLLISION_LEADERS,
         "original_probability_sum": sum(r.win_probability for r in prediction.rows),
         "pace_probability_sum": sum(pace.values()),
+        "biomechanics_probability_sum": sum(biomechanics.values()),
         "adjusted_probability_sum": sum(adjusted.values()),
         "most_helped": beneficiary,
         "runners": runners,
@@ -150,6 +166,13 @@ def main() -> None:
             "final_stretch_meters": FINAL_STRETCH_METERS,
             "log_strength_by_fatigue_factor": FINAL_STRETCH_ENERGY,
             "max_stride_drop_modulation": MAX_STRIDE_MODULATION,
+        },
+        "trip": {
+            "calibrated": False,
+            "drafting_log_strength_bonus": DRAFTING_BONUS,
+            "wide_log_strength_penalty": OVERGROUND_PENALTY,
+            "exposed_leader_log_strength_penalty": EXPOSED_LEADER_PENALTY,
+            "wide_penalty_exemption": "Resistencia Alta",
         },
     }
     report.update({"races": race_reports} if args.race is None else race_reports[0])

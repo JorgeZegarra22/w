@@ -30,6 +30,8 @@ _REQUIRED = {
     "video_code",
     "style",
 }
+_DRAFTING = {"si": True, "no": False}
+_OVERGROUND = {"alto": "Alto", "medio": "Medio", "bajo": "Bajo"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +45,15 @@ class VideoStyle:
     stride_frequency: float | None = None
     fatigue_factor: str | None = None
     stride_drop_pct: float | None = None
+    drafting_saved_energy: bool | None = None
+    overground_penalty: str | None = None
+    lane_position: str | None = None
+
+    @property
+    def drafting_label(self) -> str:
+        if self.drafting_saved_energy is None:
+            return "—"
+        return "Sí" if self.drafting_saved_energy else "No"
 
     @property
     def label(self) -> str:
@@ -104,6 +115,12 @@ def load_video_styles(
             raise ValueError(
                 f"Falta la fecha anterior o el identificador de video del mandil {mandil}."
             )
+        drafting = normalize_name(row.get("drafting_saved_energy") or "")
+        overground = normalize_name(row.get("overground_penalty") or "")
+        if drafting and drafting not in _DRAFTING:
+            raise ValueError(f"Etiqueta de estela inválida en el mandil {mandil}.")
+        if overground and overground not in _OVERGROUND:
+            raise ValueError(f"Etiqueta de desgaste por fuera inválida en el mandil {mandil}.")
         styles[mandil] = VideoStyle(
             _STYLES[key],
             raw_style,
@@ -114,6 +131,9 @@ def load_video_styles(
             _measurement(row, "stride_frequency", mandil),
             (row.get("fatigue_factor") or "").strip() or None,
             _measurement(row, "stride_drop_pct", mandil),
+            _DRAFTING.get(drafting),
+            _OVERGROUND.get(overground),
+            (row.get("lane_position") or "").strip() or None,
         )
     if styles and styles.keys() != expected.keys():
         raise ValueError("Faltan mandiles de la nómina en el CSV para esta carrera.")

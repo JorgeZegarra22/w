@@ -15,6 +15,9 @@ NOISE_SCALE = 0.9
 FINAL_STRETCH_METERS = 400
 FINAL_STRETCH_ENERGY = {"fatiga alta": -0.55, "resistencia alta": 0.25}
 MAX_STRIDE_MODULATION = 0.30
+DRAFTING_BONUS = 0.18
+OVERGROUND_PENALTY = 0.22
+EXPOSED_LEADER_PENALTY = 0.12
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,14 +27,28 @@ class PaceParticipant:
     style: PaceStyle
     fatigue_factor: str | None = None
     stride_drop_pct: float | None = None
+    drafting_saved_energy: bool | None = None
+    overground_penalty: str | None = None
+
+    def _fatigue_category(self) -> str:
+        return " ".join((self.fatigue_factor or "").casefold().split())
 
     def final_stretch_energy(self) -> float:
         """Apply a heuristic log-strength change at the end of the race."""
         if self.stride_drop_pct is not None and not isfinite(self.stride_drop_pct):
             raise ValueError("La variación de zancada debe ser finita.")
-        factor = " ".join((self.fatigue_factor or "").lower().split())
         stride_change = min(abs(self.stride_drop_pct or 0.0) / 100, MAX_STRIDE_MODULATION)
-        return FINAL_STRETCH_ENERGY.get(factor, 0.0) * (1 + stride_change)
+        return FINAL_STRETCH_ENERGY.get(self._fatigue_category(), 0.0) * (1 + stride_change)
+
+    def trip_energy(self) -> float:
+        """Estimate sprint energy retained through cover and ground saved."""
+        energy = DRAFTING_BONUS if self.drafting_saved_energy is True else 0.0
+        if self.style == PaceStyle.PUNTERO and self.drafting_saved_energy is False:
+            energy -= EXPOSED_LEADER_PENALTY
+        wide = (self.overground_penalty or "").strip().casefold() == "alto"
+        if wide and self._fatigue_category() != "resistencia alta":
+            energy -= OVERGROUND_PENALTY
+        return energy
 
 
 def count_leaders(participants: Sequence[PaceParticipant]) -> int:
@@ -44,6 +61,7 @@ def simulate_race(
     *,
     seed: int = 42,
     include_biomechanics: bool = True,
+    include_trip: bool = True,
 ) -> dict[str, float]:
     """Transfer baseline mass using shared Gaussian draws across scenarios."""
     if len(participants) < 2 or num_simulations < 1:
@@ -73,6 +91,8 @@ def simulate_race(
     final_energy = energy + delta
     if include_biomechanics:
         final_energy += np.asarray([item.final_stretch_energy() for item in participants])
+        if include_trip:
+            final_energy += np.asarray([item.trip_energy() for item in participants])
     tactical = np.argmax(final_energy, axis=1)
     if np.array_equal(neutral, tactical) and sum(base.tolist()) == 1.0:
         return dict(zip(ids, base.tolist(), strict=True))

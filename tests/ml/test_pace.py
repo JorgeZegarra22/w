@@ -53,3 +53,22 @@ def test_biomechanics_applies_independently_of_pace_collision() -> None:
     assert pace == {"a": 0.4, "b": 0.35, "c": 0.25}
     assert adjusted["a"] < pace["a"] and adjusted["b"] > pace["b"]
     assert sum(adjusted.values()) == 1.0
+
+
+def test_trip_adjustment_rewards_cover_and_penalizes_exposure_and_wide_running() -> None:
+    field = (
+        PaceParticipant("cover", 0.2, PaceStyle.MEDIO, drafting_saved_energy=True),
+        PaceParticipant("wide", 0.2, PaceStyle.MEDIO, overground_penalty="Alto"),
+        PaceParticipant("wind", 0.2, PaceStyle.PUNTERO, drafting_saved_energy=False),
+        PaceParticipant("unknown", 0.2, PaceStyle.PUNTERO),
+        PaceParticipant(
+            "wide-resistant", 0.2, PaceStyle.MEDIO, "Resistencia Alta", overground_penalty="Alto"
+        ),
+    )
+    assert field[3].trip_energy() == field[4].trip_energy() == 0
+    baseline = simulate_race(field, include_trip=False)
+    adjusted = simulate_race(field)
+    assert adjusted["cover"] > baseline["cover"]
+    assert adjusted["wide"] < baseline["wide"]
+    assert adjusted["wind"] < baseline["wind"]
+    assert sum(adjusted.values()) == 1.0

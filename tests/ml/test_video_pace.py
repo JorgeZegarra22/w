@@ -66,3 +66,19 @@ def test_biomechanics_uses_prior_video_and_discards_debutant_placeholders() -> N
     assert styles[2].stride_frequency == 2.23
     assert styles[2].fatigue_factor == "Fatiga Alta"
     assert styles[2].stride_drop_pct == 18.0
+
+
+def test_trip_metadata_uses_only_verified_prior_video_rows() -> None:
+    source = (
+        HEADER.rstrip()
+        + ",drafting_saved_energy,overground_penalty,lane_position\n"
+        + (
+            "3ª,1,Debut,2026-11-22,2026-11-22,,Debutante,No,Bajo,Carril 1\n"
+            "3ª,2,Segundo,2026-11-22,2026-11-01,v2,Puntero Nato,Sí,Alto,Carril 5\n"
+        )
+    )
+    styles = load_video_styles(source, DAY, 3, {1: "Debut", 2: "Segundo"})
+    assert styles[1].drafting_saved_energy is None and styles[1].overground_penalty is None
+    assert styles[2].drafting_saved_energy is True
+    assert styles[2].overground_penalty == "Alto"
+    assert styles[2].lane_position == "Carril 5"

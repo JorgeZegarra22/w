@@ -18,7 +18,7 @@ from benter_peru.ml.models import (
 )
 from benter_peru.ml.pace import classify_pace
 from benter_peru.ml.real_features import HistoricalFeatureError
-from benter_peru.ui.pace_panel import show_pace_panel
+from benter_peru.ui.pace_panel import load_race_video_styles, show_pace_panel
 from benter_peru.ui.queries import (
     DATABASE_ERROR_MESSAGE,
     DashboardDatabaseError,
@@ -126,10 +126,21 @@ def _show_races(repository: DashboardRepository) -> None:
     st.dataframe(frame, hide_index=True, width="stretch")
 
     snapshots = repository.horse_snapshots_for_race(race.id)
+    video_styles = load_race_video_styles(
+        race, dict(zip(frame["Mandil"], frame["Caballo"], strict=True))
+    )
     for row in frame.to_dict(orient="records"):
         mandil = int(row["Mandil"])
         snapshot = snapshots.get(mandil)
         with st.expander(f"{mandil} · {row['Caballo']}"):
+            video = video_styles.get(mandil)
+            if video is not None and video.video_code:
+                st.caption(
+                    f"Video previo · Estela {video.drafting_label} · "
+                    f"Desgaste por fuera {video.overground_penalty or '—'}"
+                )
+                if video.lane_position:
+                    st.caption(video.lane_position)
             if snapshot is None:
                 st.caption("Perfil oficial no disponible.")
                 continue

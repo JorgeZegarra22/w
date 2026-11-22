@@ -1,6 +1,7 @@
 """Race-scoped controls for exploring Monte Carlo pace scenarios."""
 
 import os
+from collections.abc import Mapping
 from pathlib import Path
 
 import pandas as pd  # type: ignore[import-untyped]
@@ -16,12 +17,30 @@ from benter_peru.ml.simulator import (
     count_leaders,
     simulate_race,
 )
-from benter_peru.ml.video_pace import load_video_styles
+from benter_peru.ml.video_pace import VideoStyle, load_video_styles
 from benter_peru.ui.queries import DashboardRepository, RaceOption
 from benter_peru.ui.service import PredictionService
 
 _AUTOMATIC = "Automático"
 _STYLE_OPTIONS = {_AUTOMATIC: None, **{style.value.capitalize(): style for style in PaceStyle}}
+
+
+def load_race_video_styles(race: RaceOption, entrants: Mapping[int, str]) -> dict[int, VideoStyle]:
+    styles_path = Path(os.environ.get("BENTER_PACE_STYLES_PATH", "estilos_domingo_2026.csv"))
+    try:
+        return (
+            load_video_styles(
+                styles_path.read_text(encoding="utf-8-sig"),
+                race.scheduled_date,
+                race.race_number,
+                entrants,
+            )
+            if styles_path.is_file()
+            else {}
+        )
+    except (OSError, ValueError) as error:
+        st.warning(f"Estilos de video no disponibles para esta carrera. {error}")
+        return {}
 
 
 def show_pace_panel(
@@ -31,21 +50,11 @@ def show_pace_panel(
     if len(entrants) < 2:
         st.info("Se necesitan al menos dos participantes para simular la carrera.")
         return
-    styles_path = Path(os.environ.get("BENTER_PACE_STYLES_PATH", "estilos_domingo_2026.csv"))
-    try:
-        video_styles = (
-            load_video_styles(
-                styles_path.read_text(encoding="utf-8-sig"),
-                race.scheduled_date,
-                race.race_number,
-                {item.mandil: item.horse_name for item in entrants},
-            )
-            if styles_path.is_file()
-            else {}
-        )
-    except (OSError, ValueError) as error:
-        st.warning(f"Estilos de video no disponibles para esta carrera. {error}")
-        video_styles = {}
+    video_styles = load_race_video_styles(race, {item.mandil: item.horse_name for item in entrants})
+    has_trip = any(
+        style.drafting_saved_energy is not None or style.overground_penalty is not None
+        for style in video_styles.values()
+    )
     snapshots = repository.horse_snapshots_for_race(race.id)
     assessments = {
         item.mandil: classify_pace(
@@ -98,12 +107,15 @@ def show_pace_panel(
                 overrides.get(row.mandil, assessments[row.mandil].style),
                 video_style.fatigue_factor if video_style else None,
                 video_style.stride_drop_pct if video_style else None,
+                video_style.drafting_saved_energy if video_style else None,
+                video_style.overground_penalty if video_style else None,
             )
             for row in prediction.rows
             for video_style in (video_styles.get(row.mandil),)
         ]
         pace = simulate_race(participants, include_biomechanics=False)
-        adjusted = simulate_race(participants) if video_styles else pace
+        biomechanics = simulate_race(participants, include_trip=False) if video_styles else pace
+        adjusted = simulate_race(participants) if has_trip else biomechanics
     except (HistoricalFeatureError, ModelError, ValueError) as error:
         st.error(f"No fue posible simular la carrera. {error}")
         return
@@ -137,9 +149,18 @@ def show_pace_panel(
                     {
                         "Zancadas/s": video_styles[row.mandil].stride_frequency,
                         "Factor de fatiga": video_styles[row.mandil].fatigue_factor or "—",
-                        "Prob. ritmo + biomecánica": adjusted[row.participant_id],
+                        "Prob. ritmo + biomecánica": biomechanics[row.participant_id],
                     }
                     if video_styles
+                    else {}
+                ),
+                **(
+                    {
+                        "Estela": video_styles[row.mandil].drafting_label,
+                        "Desgaste por fuera": video_styles[row.mandil].overground_penalty or "—",
+                        "Prob. ajuste completo": adjusted[row.participant_id],
+                    }
+                    if has_trip
                     else {}
                 ),
             }
@@ -157,6 +178,7 @@ def show_pace_panel(
                 "Prob. Ensamble",
                 "Prob. ajustada por ritmo",
                 "Prob. ritmo + biomecánica",
+                "Prob. ajuste completo",
             )
         },
     )
