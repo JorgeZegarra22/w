@@ -1,0 +1,2 @@
+libgomp1
+libsqlite3-0

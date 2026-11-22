@@ -2,7 +2,6 @@
 
 import os
 from collections.abc import Mapping
-from pathlib import Path
 
 import pandas as pd  # type: ignore[import-untyped]
 import streamlit as st
@@ -18,6 +17,7 @@ from benter_peru.ml.simulator import (
     simulate_race,
 )
 from benter_peru.ml.video_pace import VideoStyle, load_video_styles
+from benter_peru.ui.paths import project_path
 from benter_peru.ui.queries import DashboardRepository, RaceOption
 from benter_peru.ui.service import PredictionService
 
@@ -26,7 +26,9 @@ _STYLE_OPTIONS = {_AUTOMATIC: None, **{style.value.capitalize(): style for style
 
 
 def load_race_video_styles(race: RaceOption, entrants: Mapping[int, str]) -> dict[int, VideoStyle]:
-    styles_path = Path(os.environ.get("BENTER_PACE_STYLES_PATH", "estilos_domingo_2026.csv"))
+    styles_path = project_path(
+        os.environ.get("BENTER_PACE_STYLES_PATH", "estilos_domingo_2026.csv")
+    )
     try:
         return (
             load_video_styles(
@@ -51,6 +53,11 @@ def show_pace_panel(
         st.info("Se necesitan al menos dos participantes para simular la carrera.")
         return
     video_styles = load_race_video_styles(race, {item.mandil: item.horse_name for item in entrants})
+    if not video_styles:
+        st.info(
+            "Datos de video no disponibles para esta carrera. "
+            "Puedes elegir los estilos manualmente."
+        )
     has_trip = any(
         style.drafting_saved_energy is not None or style.overground_penalty is not None
         for style in video_styles.values()

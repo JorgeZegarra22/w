@@ -19,6 +19,7 @@ from benter_peru.ml.models import (
 from benter_peru.ml.pace import classify_pace
 from benter_peru.ml.real_features import HistoricalFeatureError
 from benter_peru.ui.pace_panel import load_race_video_styles, show_pace_panel
+from benter_peru.ui.paths import project_path
 from benter_peru.ui.queries import (
     DATABASE_ERROR_MESSAGE,
     DashboardDatabaseError,
@@ -251,6 +252,7 @@ def _show_market_strategy(
     repository: DashboardRepository, prediction_service: PredictionService
 ) -> None:
     st.header("Estrategia de Apuestas")
+    st.caption("En la versión web, las cuotas deben ingresarse manualmente")
     st.caption(
         "Las cuotas se usan solo en memoria. Sin cuota real no se calcula EV ni Kelly."
     )
@@ -413,22 +415,24 @@ def main() -> None:
     st.set_page_config(page_title="Benter Perú", page_icon="🐎", layout="wide")
     st.title("Benter Perú")
     st.caption("Inteligencia hípica auditable · dashboard de solo lectura")
-    database_path = os.environ.get("BENTER_DATABASE_PATH", "var/benter.sqlite3")
+    database_path = project_path(os.environ.get("BENTER_DATABASE_PATH", "var/benter.sqlite3"))
     try:
-        repository = _repository(database_path)
+        repository = _repository(str(database_path))
     except DashboardDatabaseError:
         st.error(DATABASE_ERROR_MESSAGE)
+        st.info("Configura una copia SQLite de solo lectura para esta instalación.")
         st.stop()
         return
     artifact_config = EnsembleArtifactConfig.from_env()
     try:
         prediction_service = _prediction_service(
-            str(artifact_config.model_path),
-            str(artifact_config.dataset_path),
+            str(project_path(artifact_config.model_path)),
+            str(project_path(artifact_config.dataset_path)),
             artifact_config.expected_sha256,
         )
     except RealModelArtifactError:
         st.error(ARTIFACT_ERROR_MESSAGE)
+        st.info("Comprueba que el modelo y el dataset histórico estén disponibles en el servidor.")
         st.stop()
         return
 

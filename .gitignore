@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+.streamlit/secrets.toml
 
 # Local data and protected documents
 .superpowers/
@@ -15,6 +16,7 @@ blobs/
 *.pdf
 *.pkl
 dataset_oficial_resultados*.csv
+estilos_domingo_2026.csv
 hipicocvs/
 
 # Python environments and caches
